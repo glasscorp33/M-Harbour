@@ -115,7 +115,7 @@ int read_key() {
 
 // read_input's memory of what is held (see there)
 static std::vector<char> in_prev_word;
-static bool in_prev[8];
+static bool in_prev[2];
 
 void wait_released() {
     do {
@@ -133,6 +133,10 @@ bool any_key_cancel() {
     return M5Cardputer.Keyboard.isPressed() > 0;
 }
 
+// Written for M5Cardputer 1.1.1 (what platformio.ini pins): its KeysState has
+// enter, del (the Backspace key), fn and shift flags and the typed characters in
+// word; fn does not change the characters, so fn+; . , / arrive as ; . , / with
+// fn set, and are turned into the arrows here.
 int read_input() {
     static bool g0_was;
     bool g0 = g0_pressed();
@@ -144,20 +148,28 @@ int read_input() {
     auto &kb = M5Cardputer.Keyboard;
     if (!kb.isChange()) return 0;
     auto st = kb.keysState();
-    bool now[8] = {st.enter, st.backspace, st.del, st.esc, st.up, st.down, st.left, st.right};
-    bool was[8];
+    bool now[2] = {st.enter, st.del};
+    bool was[2];
     memcpy(was, in_prev, sizeof was);
     memcpy(in_prev, now, sizeof in_prev);
     std::vector<char> old = in_prev_word;
     in_prev_word = st.word;
-    static const int codes[8] = {'\n', IN_BKSP, IN_DEL, IN_ESC, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT};
-    for (int i = 0; i < 8; i++)
-        if (now[i] && !was[i]) return codes[i];
+    if (now[0] && !was[0]) return '\n';
+    if (now[1] && !was[1]) return st.fn ? IN_DEL : IN_BKSP;
     for (char c : st.word) {
         bool held = false;
         for (char o : old) held |= o == c;
         if (held) continue;
-        if (c == '`') return IN_ESC;
+        if (c == '`' || c == '~') return IN_ESC;
+        if (st.fn) {
+            switch (c) {
+                case ';': return IN_UP;
+                case '.': return IN_DOWN;
+                case ',': return IN_LEFT;
+                case '/': return IN_RIGHT;
+                default: break;
+            }
+        }
         if (c >= 0x20 && c < 0x7F) return c;
     }
     return 0;
