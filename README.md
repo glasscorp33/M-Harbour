@@ -77,7 +77,8 @@ loader through the ROM and reads, erases and writes the flash
 | `src/usbkey.cpp` | USB_KEY, calibration pulses, self-tests |
 | `src/uboot_host.cpp` | USB host, Bulk-Only Transport |
 | `src/jl.cpp`, `src/mflr_loader.h` | ROM and loader protocol; M-Flasher's loader (MIT) |
-| `src/writer.cpp` | the rescue install |
+| `src/writer.cpp` | the rescue install, and a backup's restore |
+| `src/restore.cpp` | whether a backup is whole and the connected unit's |
 | `src/engine.cpp` | download mode, connection, the unit's model, backup: both modes' work |
 | `src/guided.cpp`, `src/advanced.cpp` | the two modes |
 | `src/ui.cpp`, `src/art.cpp`, `art/` | screen, keys, log; the guided mode's pictures |
@@ -97,6 +98,9 @@ PlatformIO (pioarduino platform, Arduino-ESP32 3.x):
 pio run                      # .pio/build/cardputer-adv/firmware.factory.bin = merged image
 pio run -t upload
 ```
+
+The writer and the restore's checks also build on a PC, with a simulated
+unit: `tests/host/run.sh` (any C++17 compiler; CI runs it too).
 
 The stock Arduino-ESP32 libraries are enough. Their ESP-IDF has
 `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` set, which cancels every USB
@@ -134,18 +138,71 @@ under your control:
 - **P** / **T** with nothing plugged in: pin check (`H3 L0`) and pulse test
   (about 3000 edges, well under 500 ppm).
 - **ENTER**, then switch the unit on: when it says **Connected**, ENTER backs
-  up, W installs the rescue, R restarts the unit, ESC ends.
+  up, W installs the rescue, L restores a backup (below), R restarts the
+  unit, ESC ends.
 - **H**: key only; on **MOVE CABLE TO PC**, move the cable to the PC, keeping
   the unit on.
 
 Run on battery, with the unit off when you start.
 
+## Restore a backup (advanced mode, L)
+
+Puts one of the unit's own backups (`/fm1/backup-NNN.bin`) back: the unit
+becomes exactly as it was then, with its own bootloader, firmware and
+settings. After the rescue an SMK-37 Elite that took a firmware from MIDI mode
+reports itself as a Pro; restoring the backup made before the rescue brings
+back the Elite as it was, with only the Cardputer.
+
+1. **Connected**, then **L**: the backups on the card, newest first (1-7 picks
+   one, N shows more). Each says whose it is by the unit ID in its `.txt`:
+   *this unit*, *OTHER unit*, or *no unit ID*.
+2. The app checks the backup and refuses it, with nothing written, unless:
+   - it is exactly 1 MiB, reads the same twice, and its CRC32 is the one in
+     its `.txt` (a backup without its `.txt` is refused);
+   - its chip key and flash ID are the unit's;
+   - it is this unit's: the flash chip's unique ID (M-Flasher's loader reads
+     it; a backup's `.txt` has it as `unit id` when the loader gave one) is the
+     unit's, and the factory data the restore never writes match the unit's:
+     on the SMK-37 USRTRIM (`0xC1000`-`0xC1FFF`, the factory key and pad
+     calibration), on both `0xFF23C`-`0xFFFFF` (key_mac). Without an ID on one side (an older
+     loader, a unit that did not give one) the factory data decide alone,
+     and only if they hold something: blank on both proves nothing, and the
+     backup is refused.
+   Not compared, as they change without the unit being another: Bluetooth
+   pairings (BTIF, `0xC0000`-`0xC0FFF` on the SMK-37) and `0xFF000`-`0xFF23B`,
+   where m-bootloader keeps its copy of the SMK-37 calibration (it writes it at
+   its first start, so it is there after a rescue and not in older backups).
+3. It shows what the backup holds (whether its boot area is the rescue's
+   m-bootloader or not: pick the one made before the rescue to get the unit's
+   own bootloader back) and how many sectors differ. **ENTER** goes on.
+4. A backup of the unit as it is now, unless this session made one already
+   (then that one is the unit as it was when it was connected).
+5. **W** writes: only the sectors that differ, as the rescue does (each run
+   verified with the chip's CRC32, then the whole range against the file), the
+   boot area last. The backup is read four sectors at a time, each piece
+   checked against what was read when the sectors were compared, before it is
+   erased: a card that fails or changes stops the write before anything more
+   is erased, the bootloader still the one there was. L again, with the card
+   back in, finishes it.
+
+Never written, as in the rescue: `0xFF000`-`0xFFFFF`, and on the SMK-37
+`0xC0000`-`0xC1FFF`. So the unit keeps its current Bluetooth pairings and
+m-bootloader's calibration copy (harmless, nothing else reads it).
+
+**Status**: built, and tested only on a PC against a simulated unit
+(`tests/host/`: identical image, differing sectors, protected ranges, other
+units, bad files, card errors while writing). Not yet run on a real FM-1 or
+SMK-37: the first restore on a real unit is the first test. The SMK-37 Elite
+is the same hardware as the Pro (`rescue/README.md`) but has not been tested
+with this app either.
+
 ## Cautions
 
 - Measure the Cardputer's USB-C VBUS while on battery. If it outputs 5 V, use a
   cable/adapter without VBUS: the unit should run from its own battery.
-- Only the repair writes the unit's flash (**Y** in the guided mode, **W** in
-  the advanced one), after a backup or the no-card warning, and a confirmation.
+- Only the repair (**Y** in the guided mode, **W** in the advanced one) and
+  the restore (**L**, then **W**, advanced mode) write the unit's flash, after
+  a backup (or, for the repair, the no-card warning) and a confirmation.
 - SD card: FAT32. It can go in at any time; the app mounts it when needed.
 
 ## Licence
