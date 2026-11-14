@@ -50,15 +50,38 @@ its `.fwsc` install rules; FM-1 Swap's new-flash-chip warning (section 7).
       unit.txt                 model, chip key, flash ID, first seen, label ("My Elite")
       current.txt              name of the snapshot last loaded
       snapshots/
-        0001 SeqAdv sequencer.bin / .txt
-        0002 Official Open.bin / .txt
-        0003 auto 2026-11-20 SeqAdv sequencer.bin / .txt
+        0001 SMK37 Open 2026-11-14.bin / .txt
+        0002 Official Open 2026-11-20.bin / .txt
+        0003 auto SMK37 Open 2026-11-20.bin / .txt
   packages/                    .fwsc files to install (section 6)
   backup-NNN.bin / .txt        existing rescue backups, still listed and importable
   log.txt
 ```
 
-Names typed on the Cardputer keyboard; file names stay FAT-safe.
+### Snapshot names
+
+Every snapshot gets a name proposed automatically, **firmware + date**, which
+can be edited on the Cardputer keyboard before saving (file names stay
+FAT-safe), e.g. `SMK37 Open 2026-11-14` or `FM-1 Midi 2026-11-14`.
+
+- **Firmware part**, best guess first:
+  1. the USB product name the unit gave while it was running, before the soft
+     key (seen on 2026-11-14: our build `SMK37 Open`, FMini-1 `1209:0001`);
+  2. the firmware identity read from the image (as M-Flasher shows it,
+     e.g. `SMK-37 Elite 800`, `FM-1 900`);
+  3. the name of `current` (the snapshot last loaded).
+  Several firmwares share labels (our build reads as "SMK-37 Elite 800"
+  in M-Flasher), so the guess is shown for confirmation, never trusted alone.
+- **Date part**: the Cardputer ADV has **no real-time clock** (checked in its
+  datasheet: no RTC chip, and its power switch cuts everything), so the date
+  comes from, in order:
+  1. Wi-Fi time (NTP), if `/fm1/wifi.txt` holds a network name and password;
+     fetched once per session, a few seconds;
+  2. otherwise the date typed once per session, prefilled with the last date
+     used (kept on the SD card), so it is usually one ENTER or a small edit.
+  The date also goes into the snapshot's `.txt` and the log lines.
+- Same name on the same day: a time or a suffix is added (`... 2026-11-14 b`).
+- Auto-saves before a LOAD follow the same rule, prefixed `auto`.
 
 ## 5. Switching (the main flow)
 
