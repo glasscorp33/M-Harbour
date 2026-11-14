@@ -281,7 +281,7 @@ static bool read_to_file(const char *path, uint32_t *crc, bool *trimdat, bool *t
     return true;
 }
 
-static bool file_crc(const char *path, uint32_t *crc) {
+bool file_crc(const char *path, uint32_t *crc) {
     File f = SD.open(path, FILE_READ);
     if (!f || f.size() != FLASH_SIZE) return false;
     *crc = 0;
@@ -296,18 +296,8 @@ static bool file_crc(const char *path, uint32_t *crc) {
     return true;
 }
 
-bool backup(const jl::Info &info, char *out_path, size_t pathlen, bool *smk, Progress progress) {
-    if (!sd_ready()) {
-        ulog("No SD card: insert one (FAT32), try again.");
-        return false;
-    }
-    char base[40], path[48], err[96];
-    for (int n = 1; n < 1000; n++) {
-        snprintf(base, sizeof base, "/fm1/backup-%03d", n);
-        snprintf(path, sizeof path, "%s.bin", base);
-        if (!SD.exists(path)) break;
-    }
-    ulog("Backing up to %s", path);
+bool read_flash(const char *path, uint32_t *out_crc, bool *smk, Progress progress) {
+    char err[96];
     uint32_t chip_crc;
     if (!jl::crc32(0, FLASH_SIZE, &chip_crc, err, sizeof err)) {
         ulog("Chip CRC failed: %s", err);
@@ -331,8 +321,30 @@ bool backup(const jl::Info &info, char *out_path, size_t pathlen, bool *smk, Pro
         return false;
     }
     if (progress) progress(1, 1);
-    if (out_path) snprintf(out_path, pathlen, "%s", path);
+    if (out_crc) *out_crc = chip_crc;
     if (smk) *smk = trimdat || trimcopy;
+    return true;
+}
+
+bool backup(const jl::Info &info, char *out_path, size_t pathlen, bool *smk, Progress progress) {
+    if (!sd_ready()) {
+        ulog("No SD card: insert one (FAT32), try again.");
+        return false;
+    }
+    char base[40], path[48];
+    for (int n = 1; n < 1000; n++) {
+        snprintf(base, sizeof base, "/fm1/backup-%03d", n);
+        snprintf(path, sizeof path, "%s.bin", base);
+        if (!SD.exists(path)) break;
+    }
+    ulog("Backing up to %s", path);
+    uint32_t chip_crc;
+    bool marks = false;
+    if (!read_flash(path, &chip_crc, &marks, progress)) return false;
+    if (out_path) snprintf(out_path, pathlen, "%s", path);
+    if (smk) *smk = marks;
+    // the model as the calibration marks show it (read_flash saw them)
+    bool trimdat = marks, trimcopy = false;
     snprintf(path, sizeof path, "%s.txt", base);
     File f = SD.open(path, FILE_WRITE);
     if (f) {
@@ -405,9 +417,7 @@ static bool read_backup(void *, uint32_t s, uint8_t *buf, char *err, size_t errl
     return true;
 }
 
-bool open_backup(int n, writer::Source *src, uint32_t *size) {
-    char path[40];
-    snprintf(path, sizeof path, "/fm1/backup-%03d.bin", n);
+bool open_file(const char *path, writer::Source *src, uint32_t *size) {
     close_backup();
     if (!sd_ready()) return false;
     restore_file = SD.open(path, FILE_READ);
@@ -416,6 +426,12 @@ bool open_backup(int n, writer::Source *src, uint32_t *size) {
     src->read = read_backup;
     src->ctx = nullptr;
     return true;
+}
+
+bool open_backup(int n, writer::Source *src, uint32_t *size) {
+    char path[40];
+    snprintf(path, sizeof path, "/fm1/backup-%03d.bin", n);
+    return open_file(path, src, size);
 }
 
 void close_backup() {

@@ -72,6 +72,12 @@ extern Unit unit;  // set by connect()
 // --- a full backup to the SD card, checked against the chip's CRC32 and read
 // back from the card. path gets its path; smk: SMK-37 calibration marks seen.
 bool backup(const jl::Info &info, char *path, size_t pathlen, bool *smk, Progress progress);
+// The same reading into any file (the library's snapshots): the whole flash,
+// a second pass if the first does not match the chip's CRC32, then read back
+// from the card. crc gets the CRC32; smk: SMK-37 calibration marks seen.
+bool read_flash(const char *path, uint32_t *crc, bool *smk, Progress progress);
+// CRC32 of a 1 MiB file on the card; false if it is not 1 MiB or unreadable.
+bool file_crc(const char *path, uint32_t *crc);
 
 // --- restoring a backup from the SD card
 // The backups' numbers (/fm1/backup-NNN.bin), newest first: how many, at most max.
@@ -81,6 +87,8 @@ bool backup_notes(int n, restore::Notes *notes);
 // Opens backup n to be read through src (restore::check, the writer), a
 // sector at a time, until close_backup(); size gets the file's size.
 bool open_backup(int n, writer::Source *src, uint32_t *size);
+// The same for any file (a snapshot); one file open at a time.
+bool open_file(const char *path, writer::Source *src, uint32_t *size);
 void close_backup();
 
 // Keeps the session busy; false when the unit is gone.

@@ -20,7 +20,7 @@
 
 namespace library {
 
-static constexpr size_t NAME_MAX = 36;       // a typed name, characters
+static constexpr size_t NAME_CHARS = 36;       // a typed name, characters
 static constexpr size_t SAFE_MAX = 32;       // its FAT-safe copy in the file name
 static constexpr size_t BASE_LEN = 4 + 1 + SAFE_MAX + 1;  // "NNNN safe" and its 0
 static constexpr int NUMBER_MAX = 9999;
@@ -28,7 +28,7 @@ static constexpr int NUMBER_MAX = 9999;
 // --- names
 
 // A typed name cleaned up: control characters dropped, spaces trimmed and
-// runs of them made one, at most NAME_MAX characters.
+// runs of them made one, at most NAME_CHARS characters.
 void clean_name(const char *in, char *out, size_t outlen);
 // The FAT-safe copy of a name: / \ : * ? " < > | and control characters
 // become -, spaces trimmed, no trailing dot, at most SAFE_MAX characters;
@@ -57,7 +57,7 @@ enum Source { SRC_UNKNOWN, SRC_BACKUP, SRC_AUTO, SRC_IMPORT };
 const char *source_name(Source s);  // "backup", "auto-save", "import", ""
 
 struct Meta {
-    char name[NAME_MAX + 1];  // as typed; "" for an old backup's .txt
+    char name[NAME_CHARS + 1];  // as typed; "" for an old backup's .txt
     char date[16];            // "" when not known (no clock)
     char model[16];           // "SMK-37", "FM-1"; from an old .txt's "unit:" line
     char firmware[48];        // the firmware hint, or ""
@@ -89,7 +89,7 @@ struct UnitFile {
     uint16_t chip_key;
     uint32_t flash_id;
     char first_seen[16];  // a date, or "" (no clock)
-    char label[NAME_MAX + 1];
+    char label[NAME_CHARS + 1];
 };
 bool format_unit(const UnitFile &u, char *buf, size_t buflen);
 void parse_unit(const char *text, UnitFile *u);
@@ -107,7 +107,7 @@ struct Entry {
     Kind kind;
     int number;                   // NNNN of a snapshot, NNN of backup-NNN
     char base[BASE_LEN + 8];      // the file name without .bin
-    char name[NAME_MAX + 1];      // as shown
+    char name[NAME_CHARS + 1];      // as shown
     bool has_crc;
     uint32_t crc;
     Source source;

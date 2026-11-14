@@ -63,7 +63,7 @@ static void test_names() {
     library::clean_name("", out, sizeof out);
     CHECK_STR(out, "");
     library::clean_name("abcdefghijklmnopqrstuvwxyz0123456789XYZ", out, sizeof out);
-    CHECK(strlen(out) == library::NAME_MAX);
+    CHECK(strlen(out) == library::NAME_CHARS);
     library::clean_name("abc", out, 3);  // a small buffer
     CHECK_STR(out, "ab");
 
@@ -142,7 +142,7 @@ static void test_suggestion() {
     library::auto_name(nullptr, nullptr, nullptr, "FM-1", out, sizeof out);
     CHECK_STR(out, "auto FM-1");
     library::auto_name("abcdefghijklmnopqrstuvwxyz0123456789", "", "", "", out, sizeof out);
-    CHECK(strlen(out) == library::NAME_MAX && !strncmp(out, "auto abc", 8));
+    CHECK(strlen(out) == library::NAME_CHARS && !strncmp(out, "auto abc", 8));
 }
 
 static void test_meta() {

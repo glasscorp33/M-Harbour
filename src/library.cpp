@@ -12,7 +12,7 @@ namespace library {
 
 void clean_name(const char *in, char *out, size_t outlen) {
     if (!outlen) return;
-    size_t n = 0, cap = outlen - 1 < NAME_MAX ? outlen - 1 : NAME_MAX;
+    size_t n = 0, cap = outlen - 1 < NAME_CHARS ? outlen - 1 : NAME_CHARS;
     bool space = false;
     for (const char *s = in ? in : ""; *s && n < cap; s++) {
         unsigned char c = (unsigned char)*s;
@@ -35,7 +35,7 @@ static bool fat_bad(unsigned char c) { return c < 0x20 || c >= 0x7F || strchr("/
 
 void safe_name(const char *name, char *out, size_t outlen) {
     if (!outlen) return;
-    char clean[NAME_MAX + 1];
+    char clean[NAME_CHARS + 1];
     clean_name(name, clean, sizeof clean);
     size_t cap = outlen - 1 < SAFE_MAX ? outlen - 1 : SAFE_MAX, n = 0;
     for (const char *s = clean; *s && n < cap; s++) out[n++] = fat_bad((unsigned char)*s) ? '-' : *s;
@@ -82,7 +82,7 @@ bool parse_legacy_file(const char *file, int *number) {
 }
 
 void suggest(const char *firmware, const char *date, const char *model, char *out, size_t outlen) {
-    char fw[NAME_MAX + 1], d[NAME_MAX + 1], m[NAME_MAX + 1], s[3 * (NAME_MAX + 1)];
+    char fw[NAME_CHARS + 1], d[NAME_CHARS + 1], m[NAME_CHARS + 1], s[3 * (NAME_CHARS + 1)];
     clean_name(firmware, fw, sizeof fw);
     clean_name(date, d, sizeof d);
     clean_name(model, m, sizeof m);
@@ -95,14 +95,14 @@ static bool starts_auto(const char *s) { return !strncmp(s, "auto ", 5) || !strn
 
 void auto_name(const char *current, const char *firmware, const char *date, const char *model, char *out,
                size_t outlen) {
-    char cur[NAME_MAX + 1], d[NAME_MAX + 1], s[2 * NAME_MAX + 16];
+    char cur[NAME_CHARS + 1], d[NAME_CHARS + 1], s[2 * NAME_CHARS + 16];
     clean_name(current, cur, sizeof cur);
     clean_name(date, d, sizeof d);
     const char *c = cur;
     while (starts_auto(c)) c += 5;
     if (*c) snprintf(s, sizeof s, "auto %s%s%s", c, d[0] ? " " : "", d);
     else {
-        char sug[NAME_MAX + 1];
+        char sug[NAME_CHARS + 1];
         suggest(firmware, d, model, sug, sizeof sug);
         snprintf(s, sizeof s, "auto %s", sug);
     }
@@ -182,7 +182,7 @@ void parse_meta(const char *text, Meta *m) {
 }
 
 bool format_meta(const Meta &m, char *buf, size_t buflen) {
-    char name[NAME_MAX + 1];
+    char name[NAME_CHARS + 1];
     clean_name(m.name, name, sizeof name);
     size_t n = 0;
     auto put = [&](const char *fmt, auto... args) {
@@ -251,7 +251,7 @@ uint32_t factory_hash(const uint8_t *usrtrim, const uint8_t *last_sector) {
 }
 
 bool format_unit(const UnitFile &u, char *buf, size_t buflen) {
-    char label[NAME_MAX + 1];
+    char label[NAME_CHARS + 1];
     clean_name(u.label, label, sizeof label);
     int w = snprintf(buf, buflen, "model: %s\nchip key: %04X\nflash id: %06lX\nfirst seen: %s\nlabel: %s\n", u.model,
                      u.chip_key, (unsigned long)u.flash_id, u.first_seen, label);
@@ -272,7 +272,7 @@ void parse_unit(const char *text, UnitFile *u) {
 }
 
 bool format_current(int number, const char *name, char *buf, size_t buflen) {
-    char clean[NAME_MAX + 1];
+    char clean[NAME_CHARS + 1];
     clean_name(name, clean, sizeof clean);
     int w = snprintf(buf, buflen, "number: %d\nname: %s\n", number, clean);
     return w >= 0 && (size_t)w < buflen;
