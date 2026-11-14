@@ -11,8 +11,8 @@ namespace libsd {
 static constexpr size_t PATH = 128;
 static char text[1024];                       // a .txt being read or written
 static library::Entry scratch[MAX_ENTRIES];   // the list, for save / auto-save
-static uint8_t sector[writer::SECTOR], sector2[writer::SECTOR];
-static uint8_t copy_buf[16384];
+// two sectors of the unit (its factory data), or a piece of a file being copied
+static uint8_t work[2 * writer::SECTOR];
 
 const char *today() { return ""; }
 
@@ -76,9 +76,10 @@ bool identify(const jl::Info &info, bool smk37, const char *model, Unit *u, char
     uint32_t hash = 0;
     if (!info.has_unique_id) {
         // no unique ID: the factory data the restore compares make the ID
-        if (smk37 && !jl::read(restore::USRTRIM, sector, sizeof sector, err, errlen)) return false;
-        if (!jl::read(restore::FLASH_SIZE - writer::SECTOR, sector2, sizeof sector2, err, errlen)) return false;
-        hash = library::factory_hash(smk37 ? sector : nullptr, sector2);
+        uint8_t *trim = work, *last = work + writer::SECTOR;
+        if (smk37 && !jl::read(restore::USRTRIM, trim, writer::SECTOR, err, errlen)) return false;
+        if (!jl::read(restore::FLASH_SIZE - writer::SECTOR, last, writer::SECTOR, err, errlen)) return false;
+        hash = library::factory_hash(smk37 ? trim : nullptr, last);
     }
     library::unit_id(info, hash, u->id, sizeof u->id);
     snprintf(u->dir, sizeof u->dir, "/fm1/units/%s", u->id);
@@ -151,7 +152,14 @@ bool set_current(const Unit &u, int number, const char *name) {
 // ---------------------------------------------------------------------------
 // The list
 
+// The highest snapshot number scan() saw, listed or not (past `max`).
+static int highest;
+
+// The next number: one more than the highest file there is, even unlisted.
+static int next_number() { return highest < library::NUMBER_MAX ? highest + 1 : 0; }
+
 static int scan(const Unit &u, const jl::Info &info, library::Entry *e, int max, bool legacy) {
+    highest = 0;
     if (!sd_ready()) return 0;
     int n = 0;
     char path[PATH];
@@ -159,12 +167,13 @@ static int scan(const Unit &u, const jl::Info &info, library::Entry *e, int max,
     File dir = SD.open(path);
     if (dir) {
         // names first, the .txt files once the folder is closed
-        for (File f = dir.openNextFile(); f && n < max; f = dir.openNextFile()) {
+        for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
             int num;
             char base[sizeof e[0].base];
             bool ok = !f.isDirectory() && library::parse_snapshot_file(leaf(f), ".bin", &num, base, sizeof base);
             f.close();
-            if (ok) {
+            if (ok && num > highest) highest = num;
+            if (ok && n < max) {
                 memset(&e[n], 0, sizeof e[n]);
                 e[n].number = num;
                 snprintf(e[n].base, sizeof e[n].base, "%s", base);
@@ -214,8 +223,8 @@ static bool write_meta(const char *path, const library::Meta &m) {
 bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware, library::Source source, int *number,
           engine::Progress progress) {
     if (!ensure(u, info)) return false;
-    int n = scan(*u, info, scratch, MAX_ENTRIES, false);
-    int num = library::next_number(scratch, n);
+    scan(*u, info, scratch, MAX_ENTRIES, false);
+    int num = next_number();
     if (!num) {
         ulog("The library is full (number %d used).", library::NUMBER_MAX);
         return false;
@@ -296,8 +305,8 @@ bool import(Unit *u, const jl::Info &info, const library::Entry &legacy, const c
         return false;
     }
     if (!ensure(u, info)) return false;
-    int n = scan(*u, info, scratch, MAX_ENTRIES, false);
-    int num = library::next_number(scratch, n);
+    scan(*u, info, scratch, MAX_ENTRIES, false);
+    int num = next_number();
     if (!num) return false;
     char base[library::BASE_LEN], from[PATH], bin[PATH], txt[PATH];
     library::base_name(num, name, base, sizeof base);
@@ -309,11 +318,10 @@ bool import(Unit *u, const jl::Info &info, const library::Entry &legacy, const c
     File in = SD.open(from, FILE_READ), out = SD.open(bin, FILE_WRITE);
     bool ok = in && out && in.size() == restore::FLASH_SIZE;
     uint32_t crc = 0;
-    for (uint32_t a = 0; ok && a < restore::FLASH_SIZE; a += sizeof copy_buf) {
-        ok = in.read(copy_buf, sizeof copy_buf) == (int)sizeof copy_buf &&
-             out.write(copy_buf, sizeof copy_buf) == sizeof copy_buf;
-        crc = jl::crc32_update(crc, copy_buf, sizeof copy_buf);
-        if (progress) progress(a + sizeof copy_buf, restore::FLASH_SIZE);
+    for (uint32_t a = 0; ok && a < restore::FLASH_SIZE; a += sizeof work) {
+        ok = in.read(work, sizeof work) == (int)sizeof work && out.write(work, sizeof work) == sizeof work;
+        crc = jl::crc32_update(crc, work, sizeof work);
+        if (progress && a % 0x10000 == 0) progress(a + sizeof work, restore::FLASH_SIZE);
     }
     if (in) in.close();
     if (out) out.close();

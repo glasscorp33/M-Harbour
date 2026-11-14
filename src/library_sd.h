@@ -11,7 +11,7 @@
 
 namespace libsd {
 
-static constexpr int MAX_ENTRIES = 96;  // snapshots and old backups listed
+static constexpr int MAX_ENTRIES = 64;  // snapshots and old backups listed (more are not shown)
 
 struct Unit {
     char id[24];               // the folder's name
