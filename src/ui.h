@@ -23,6 +23,31 @@ int read_key();
 void wait_released();
 bool any_key_cancel();
 
+// For typing and lists: each key once, as it goes down (a key still held
+// while another is pressed is not repeated), with its case and shifted
+// symbol; or one of these. 0: nothing new.
+enum : int { IN_BKSP = 8, IN_ESC = 27, IN_DEL = 0x7F, IN_UP = 0x101, IN_DOWN, IN_LEFT, IN_RIGHT };
+// '\n' ENTER or G0, IN_ESC (` or fn+`), IN_BKSP, IN_DEL (fn+BKSP), the
+// arrows (fn+; . , /), or a printable character (shift: capitals, ! @ # ...).
+int read_input();
+
+// The name window: a title, two lines of help, the text being typed
+// (prefilled with buf), at most cap - 1 characters (printable ASCII).
+// ENTER keeps it (not if empty), ESC cancels, BKSP deletes the last
+// character, fn+BKSP clears it all. tick() runs about once a second and
+// returns false when the unit is gone (cancelled then). True: buf is the name.
+bool text_input(const char *title, const char *help1, const char *help2, char *buf, size_t cap, bool (*tick)());
+
+// A list screen: a title (and a smaller subtitle), up to LIST_ROWS rows from
+// `first` with `selected` highlighted, a detail line, two help lines.
+static constexpr int LIST_ROWS = 8;
+struct Row {
+    char text[41];
+    uint16_t color;
+};
+void list_screen(const char *title, uint16_t color, const char *subtitle, const Row *rows, int n, int first,
+                 int selected, const char *detail, const char *help1, const char *help2);
+
 // --- the advanced mode's console: a title, the last log lines, a status line
 void console(const char *title, uint16_t color);
 void status(const char *fmt, ...);
