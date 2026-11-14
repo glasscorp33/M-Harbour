@@ -22,10 +22,10 @@ struct MidiOut {
 };
 
 enum Find {
-    FOUND,
-    NO_MIDI,         // no MIDIStreaming interface at all
+    NO_MIDI,         // no MIDIStreaming interface at all (0: a zeroed result finds nothing)
     NO_BULK_OUT,     // MIDIStreaming, but no bulk OUT endpoint in any of them
     BAD_DESCRIPTOR,  // too short, or not a configuration descriptor
+    FOUND,
 };
 const char *find_name(Find f);
 

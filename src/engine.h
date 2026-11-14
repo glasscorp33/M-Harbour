@@ -7,6 +7,7 @@
 
 #include "jl.h"
 #include "restore.h"
+#include "usb_midi.h"
 #include "usbkey.h"
 #include "writer.h"
 
@@ -25,8 +26,40 @@ struct EnterHooks {
 EnterResult enter_download_mode(const EnterHooks &h, uint32_t timeout_ms, usbkey::KeyStats *ks);
 
 // --- the USB host and the loader
-enum ConnectResult { CONN_OK, CONN_HOST_ERROR, CONN_NO_DEVICE, CONN_NOT_ROM, CONN_LOADER_FAILED };
+enum ConnectResult {
+    CONN_OK,
+    CONN_HOST_ERROR,
+    CONN_NO_DEVICE,
+    CONN_NOT_ROM,        // another device: see `other`
+    CONN_LOADER_FAILED,
+    // soft_key() only
+    CONN_NOT_MIDI,       // not a USB MIDI device with a bulk OUT: nothing sent
+    CONN_SEND_FAILED,    // the MIDI transfer failed, the device is still there
+    CONN_NO_ANSWER,      // sent, but it did not restart: the firmware may not know it
+    CONN_NOT_BACK,       // it left USB, but did not come back as the download mode
+    CONN_CANCELLED,
+};
 ConnectResult connect(jl::Info *info, char *err, size_t errlen);
+
+// After CONN_NOT_ROM: the device that answered instead of the download mode
+// (a unit running its firmware, m-bootloader's MIDI mode, a bootloader's
+// update loader, ...).
+struct Other {
+    uint16_t vid, pid;
+    char product[48];
+    usbmidi::Find midi;   // FOUND: `out` is its first MIDI OUT
+    usbmidi::MidiOut out;
+};
+extern Other other;
+
+// --- a running unit: the soft key over USB MIDI (M-Flasher's src/midi.rs)
+// After CONN_NOT_ROM with other.midi == FOUND, and only when the user asked
+// for it: sends F0 22 24 35 7D F7 to the first MIDI OUT (cable 0), waits up
+// to SOFT_KEY_MS for the unit to leave USB and come back as the download mode
+// (4C4A:8057), then goes on as connect() does. Nothing else is ever sent to
+// the device. tick: called while waiting, true cancels.
+static constexpr uint32_t SOFT_KEY_MS = 30000;
+ConnectResult soft_key(jl::Info *info, bool (*tick)(), char *err, size_t errlen);
 
 // --- which unit: decided before anything can be written
 enum Model { MODEL_UNKNOWN, MODEL_FM1, MODEL_SMK37 };

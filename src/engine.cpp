@@ -71,28 +71,38 @@ static Unit identify_unit(const jl::Info &info) {
 // ---------------------------------------------------------------------------
 // USB host and loader
 
-ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
-    usbkey::bus_float();
-    if (!host::start()) {
-        snprintf(err, errlen, "could not start the USB host");
-        ulog("%s", err);
-        return CONN_HOST_ERROR;
+Other other;
+
+static bool is_rom(uint16_t vid, uint16_t pid) { return vid == 0x4C4A && pid == 0x8057; }
+
+// What the device that is not the download mode is, for the log and the soft
+// key. Reads only what the USB host already has: nothing is sent to it.
+static void inspect_other(uint16_t vid, uint16_t pid) {
+    other = {};
+    other.vid = vid;
+    other.pid = pid;
+    other.midi = usbmidi::BAD_DESCRIPTOR;
+    host::Device d;
+    if (!host::device(&d)) {
+        ulog("%04X:%04X: no descriptors from the USB host", vid, pid);
+        return;
     }
-    uint16_t vid = 0, pid = 0;
-    if (!host::wait_device(12000, &vid, &pid, ulog, err, errlen)) {
-        ulog("%s", err);
-        if (vid) {
-            ulog("Device %04X:%04X: not the download mode", vid, pid);
-            return CONN_NOT_ROM;
-        }
-        return CONN_NO_DEVICE;
+    snprintf(other.product, sizeof other.product, "%s", d.product);
+    ulog("%04X:%04X product \"%s\"", vid, pid, d.product[0] ? d.product : "(none)");
+    if (!d.config) {
+        ulog("No configuration descriptor: not USB MIDI.");
+        return;
     }
-    ulog("USB device %04X:%04X", vid, pid);
-    if (vid != 0x4C4A || pid != 0x8057) {
-        snprintf(err, errlen, "%04X:%04X is not the download mode", vid, pid);
-        ulog("%s", err);
-        return CONN_NOT_ROM;
-    }
+    other.midi = usbmidi::find_midi_out(d.config, d.config_len, &other.out);
+    if (other.midi == usbmidi::FOUND)
+        ulog("USB MIDI: interface %u alt %u, bulk OUT EP %02X, %u-byte packets", other.out.iface, other.out.alt,
+             other.out.ep, other.out.mps);
+    else
+        ulog("Not USB MIDI: %s (config %u bytes)", usbmidi::find_name(other.midi), (unsigned)d.config_len);
+}
+
+// The download mode is on the bus: the loader, and which unit it is.
+static ConnectResult start_loader(jl::Info *info, char *err, size_t errlen) {
     if (!jl::start(info, ulog, err, errlen)) {
         ulog("%s", err);
         return CONN_LOADER_FAILED;
@@ -110,6 +120,120 @@ ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
     ulog("Unit: %s (%s)", unit.name, unit.why);
     if (info->retries) ulog("%lu transfers retried", (unsigned long)info->retries);
     return CONN_OK;
+}
+
+ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
+    usbkey::bus_float();
+    other = {};
+    if (!host::start()) {
+        snprintf(err, errlen, "could not start the USB host");
+        ulog("%s", err);
+        return CONN_HOST_ERROR;
+    }
+    uint16_t vid = 0, pid = 0;
+    if (!host::wait_device(12000, &vid, &pid, ulog, err, errlen)) {
+        ulog("%s", err);
+        if (vid) {
+            ulog("Device %04X:%04X: not the download mode", vid, pid);
+            inspect_other(vid, pid);
+            return CONN_NOT_ROM;
+        }
+        return CONN_NO_DEVICE;
+    }
+    ulog("USB device %04X:%04X", vid, pid);
+    if (!is_rom(vid, pid)) {
+        snprintf(err, errlen, "%04X:%04X is not the download mode", vid, pid);
+        ulog("%s", err);
+        inspect_other(vid, pid);
+        return CONN_NOT_ROM;
+    }
+    return start_loader(info, err, errlen);
+}
+
+ConnectResult soft_key(jl::Info *info, bool (*tick)(), char *err, size_t errlen) {
+    if (!other.vid || other.midi != usbmidi::FOUND) {
+        snprintf(err, errlen, "%04X:%04X is not USB MIDI with a bulk OUT: nothing sent", other.vid, other.pid);
+        ulog("%s", err);
+        return CONN_NOT_MIDI;
+    }
+    uint8_t pkt[8];
+    size_t n = usbmidi::sysex_packets(usbmidi::SOFT_KEY, sizeof usbmidi::SOFT_KEY, 0, pkt, sizeof pkt);
+    ulog("Soft key (M-Flasher) to %04X:%04X \"%s\"", other.vid, other.pid, other.product);
+    ulog("Interface %u, EP %02X, %u-byte packets, cable 0", other.out.iface, other.out.ep, other.out.mps);
+    ulog("Sending %u bytes: %02X %02X %02X %02X %02X %02X %02X %02X", (unsigned)n, pkt[0], pkt[1], pkt[2], pkt[3],
+         pkt[4], pkt[5], pkt[6], pkt[7]);
+    uint32_t sent = 0;
+    int st = -1;
+    uint32_t t0 = millis();
+    bool ok = host::bulk_out(other.out.iface, other.out.alt, other.out.ep, pkt, n, &sent, &st, err, errlen);
+    ulog("Transfer: %s, %lu of %u bytes", host::status_name(st), (unsigned long)sent, (unsigned)n);
+    if (!ok) {
+        ulog("%s", err);
+        // a unit that restarts at once may leave before the transfer ends
+        if (host::connected()) return CONN_SEND_FAILED;
+        ulog("The device left during the transfer.");
+    }
+
+    ulog("Waiting up to %lu s for it to restart", (unsigned long)(SOFT_KEY_MS / 1000));
+    ulog("into the download mode (4C4A:8057).");
+    if (host::connected() && !host::wait_gone(SOFT_KEY_MS, tick)) {
+        if (millis() - t0 < SOFT_KEY_MS) {
+            snprintf(err, errlen, "cancelled while waiting");
+            ulog("Cancelled: it was still connected.");
+            return CONN_CANCELLED;
+        }
+        snprintf(err, errlen, "the firmware did not answer the MIDI request (it may not support it)");
+        ulog("Still connected after %lu s:", (unsigned long)(SOFT_KEY_MS / 1000));
+        ulog("%s", err);
+        return CONN_NO_ANSWER;
+    }
+    ulog("Disconnect seen after %lu ms", (unsigned long)(millis() - t0));
+    host::close_device(ulog);
+
+    for (;;) {
+        uint32_t used = millis() - t0;
+        if (used >= SOFT_KEY_MS) {
+            snprintf(err, errlen, "it left USB, but no download mode in %lu s", (unsigned long)(SOFT_KEY_MS / 1000));
+            ulog("%s", err);
+            return CONN_NOT_BACK;
+        }
+        uint16_t vid = 0, pid = 0;
+        bool opened = host::wait_device(SOFT_KEY_MS - used, &vid, &pid, ulog, err, errlen);
+        if (!vid) {
+            ulog("%s", err);
+            snprintf(err, errlen, "it left USB and did not come back in %lu s", (unsigned long)(SOFT_KEY_MS / 1000));
+            ulog("%s", err);
+            return CONN_NOT_BACK;
+        }
+        host::Device d;
+        bool named = host::device(&d) && d.product[0];
+        ulog("Reconnected after %lu ms: %04X:%04X%s%s%s", (unsigned long)(millis() - t0), vid, pid,
+             named ? " \"" : "", named ? d.product : "", named ? "\"" : "");
+        if (is_rom(vid, pid)) {
+            if (!opened) {
+                ulog("%s", err);
+                return CONN_NOT_BACK;
+            }
+            ulog("USB device %04X:%04X: the download mode", vid, pid);
+            return start_loader(info, err, errlen);
+        }
+        // not the download mode (yet): it may still be on its way there
+        ulog("Not the download mode; waiting for it to leave again.");
+        used = millis() - t0;
+        if (used >= SOFT_KEY_MS || !host::wait_gone(SOFT_KEY_MS - used, tick)) {
+            if (millis() - t0 < SOFT_KEY_MS) {
+                snprintf(err, errlen, "cancelled while waiting");
+                ulog("Cancelled: %04X:%04X was connected.", vid, pid);
+                return CONN_CANCELLED;
+            }
+            snprintf(err, errlen, "it came back as %04X:%04X, not the download mode", vid, pid);
+            ulog("%s", err);
+            ulog("The firmware did not answer the MIDI request (it may not support it).");
+            return CONN_NOT_BACK;
+        }
+        ulog("Disconnect seen after %lu ms", (unsigned long)(millis() - t0));
+        host::close_device(ulog);
+    }
 }
 
 bool keepalive() { return jl::ping() || host::connected(); }

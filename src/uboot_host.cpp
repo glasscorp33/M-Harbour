@@ -1,6 +1,8 @@
 // USB host + Bulk-Only Transport, after M-Flasher's src/usb.rs (MIT).
 #include "uboot_host.h"
 
+#include "usb_midi.h"
+
 #include <initializer_list>
 #include <string.h>
 #include <stdio.h>
@@ -9,6 +11,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <usb/usb_host.h>
+#include <esp_err.h>
 #include <esp_log.h>
 #include <soc/gpio_reg.h>
 #include <soc/rtc_cntl_reg.h>
@@ -33,6 +36,8 @@ static usb_transfer_t *x_out, *x_in, *x_ctl;
 static SemaphoreHandle_t done;
 static uint32_t tag;
 static uint8_t dev_addr;
+static bool claimed;            // iface is claimed on dev
+static char product[48];        // dev's product string
 static Log trace;  // the app's log, for every transfer that is not plainly OK
 
 // ---------------------------------------------------------------- diagnostics
@@ -222,8 +227,13 @@ bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, cha
         snprintf(err, errlen, "could not open the USB device");
         return false;
     }
+    claimed = false;
+    product[0] = 0;
     usb_device_info_t di;
-    if (usb_host_device_info(dev, &di) == ESP_OK) dev_addr = di.dev_addr;
+    if (usb_host_device_info(dev, &di) == ESP_OK) {
+        dev_addr = di.dev_addr;
+        usbmidi::string_ascii((const uint8_t *)di.str_desc_product, product, sizeof product);
+    }
     const usb_device_desc_t *dd;
     usb_host_get_device_descriptor(dev, &dd);
     *vid = dd->idVendor;
@@ -236,6 +246,25 @@ bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, cha
     if (usb_host_interface_claim(client, dev, iface, 0) != ESP_OK) {
         snprintf(err, errlen, "could not claim interface %u", iface);
         return false;
+    }
+    claimed = true;
+    return true;
+}
+
+bool device(Device *d) {
+    if (!dev) return false;
+    const usb_device_desc_t *dd;
+    if (usb_host_get_device_descriptor(dev, &dd) != ESP_OK) return false;
+    d->vid = dd->idVendor;
+    d->pid = dd->idProduct;
+    snprintf(d->product, sizeof d->product, "%s", product);
+    const usb_config_desc_t *cd;
+    if (usb_host_get_active_config_descriptor(dev, &cd) == ESP_OK) {
+        d->config = (const uint8_t *)cd;
+        d->config_len = cd->wTotalLength;
+    } else {
+        d->config = nullptr;
+        d->config_len = 0;
     }
     return true;
 }
@@ -418,6 +447,89 @@ Result execute(const uint8_t *cdb, uint8_t cdb_len, uint8_t *buf, uint32_t len, 
     // a refused command leaves the transport in order; a failed one is reset
     if (r == FAILED && connected()) reset_recovery();
     return r;
+}
+
+// ---------------------------------------------------------------- a running unit
+
+const char *status_name(int st) {
+    switch (st) {
+        case -1: return "not submitted";
+        case USB_TRANSFER_STATUS_COMPLETED: return "completed";
+        case USB_TRANSFER_STATUS_ERROR: return "error";
+        case USB_TRANSFER_STATUS_TIMED_OUT: return "timed out";
+        case USB_TRANSFER_STATUS_CANCELED: return "canceled";
+        case USB_TRANSFER_STATUS_STALL: return "stalled";
+        case USB_TRANSFER_STATUS_OVERFLOW: return "overflow";
+        case USB_TRANSFER_STATUS_SKIPPED: return "skipped";
+        case USB_TRANSFER_STATUS_NO_DEVICE: return "no device (it left)";
+        default: return "unknown";
+    }
+}
+
+bool bulk_out(uint8_t want_if, uint8_t alt, uint8_t ep, const uint8_t *data, size_t len, uint32_t *sent, int *status,
+              char *err, size_t errlen) {
+    *sent = 0;
+    *status = -1;
+    if (!connected()) {
+        snprintf(err, errlen, "the device is not connected");
+        return false;
+    }
+    if (len > OUT_SIZE || (ep & 0x80)) {
+        snprintf(err, errlen, "bad OUT transfer (EP %02X, %u bytes)", ep, (unsigned)len);
+        return false;
+    }
+    // wait_device() claimed the first interface with bulk IN and OUT: usually
+    // this one already
+    if (!claimed || iface != want_if) {
+        if (claimed) {
+            esp_err_t e = usb_host_interface_release(client, dev, iface);
+            if (trace) trace("USB: released interface %u (%s)", iface, esp_err_to_name(e));
+            claimed = false;
+        }
+        esp_err_t e = usb_host_interface_claim(client, dev, want_if, alt);
+        if (e != ESP_OK) {
+            snprintf(err, errlen, "could not claim interface %u alt %u (%s)", want_if, alt, esp_err_to_name(e));
+            return false;
+        }
+        iface = want_if;
+        claimed = true;
+    }
+    memcpy(x_out->data_buffer, data, len);
+    usb_transfer_status_t st = run(x_out, ep, (int)len);
+    *status = (int)st;
+    if (st != USB_TRANSFER_STATUS_COMPLETED) {
+        snprintf(err, errlen, "transfer to EP %02X: %s", ep, status_name(st));
+        return false;
+    }
+    *sent = x_out->actual_num_bytes;
+    return true;
+}
+
+bool wait_gone(uint32_t timeout_ms, bool (*tick)()) {
+    TickType_t t0 = xTaskGetTickCount();
+    while (!gone) {
+        if (xTaskGetTickCount() - t0 > pdMS_TO_TICKS(timeout_ms)) return false;
+        if (tick && tick()) return false;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return true;
+}
+
+void close_device(Log log) {
+    if (!dev) return;
+    // the next device's NEW_DEV only comes once this one is freed
+    new_addr = -1;
+    if (claimed) {
+        esp_err_t e = usb_host_interface_release(client, dev, iface);
+        if (e != ESP_OK && log) log("USB: releasing interface %u: %s", iface, esp_err_to_name(e));
+        claimed = false;
+    }
+    esp_err_t e = usb_host_device_close(client, dev);
+    if (e != ESP_OK && log) log("USB: closing the device: %s", esp_err_to_name(e));
+    dev = nullptr;
+    gone = false;
+    product[0] = 0;
+    if (log) drain_idf_log(log);
 }
 
 }  // namespace host
