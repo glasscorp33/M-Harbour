@@ -99,6 +99,13 @@ ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
     }
     ulog("Loader M-Flasher %s at %08lX, %u MHz", info->loader, (unsigned long)info->loader_addr, info->mhz);
     ulog("Chip key %04X, flash ID %06lX", info->chip_key, (unsigned long)info->flash_id);
+    if (info->has_unique_id) {
+        char id[17];
+        for (int i = 0; i < 8; i++) snprintf(id + 2 * i, 3, "%02x", info->unique_id[i]);
+        ulog("Unit ID %s", id);
+    } else {
+        ulog("No unit ID from the loader");
+    }
     unit = identify_unit(*info);
     ulog("Unit: %s (%s)", unit.name, unit.why);
     if (info->retries) ulog("%lu transfers retried", (unsigned long)info->retries);
@@ -220,6 +227,75 @@ bool backup(const jl::Info &info, char *out_path, size_t pathlen, bool *smk, Pro
     ulog("OK: CRC32 %08lX matches the chip.", (unsigned long)chip_crc);
     ulog("Unit: %s", model_hint(info.flash_id, trimdat, trimcopy));
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Restore: the backups on the card
+
+int list_backups(int *nums, int max) {
+    if (!sd_ready()) return 0;
+    File dir = SD.open("/fm1");
+    if (!dir) return 0;
+    int count = 0;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        const char *name = strrchr(f.name(), '/');
+        name = name ? name + 1 : f.name();
+        // exactly backup-NNN.bin
+        bool ok = !f.isDirectory() && strlen(name) == 14 && !strncmp(name, "backup-", 7) && isdigit(name[7]) &&
+                  isdigit(name[8]) && isdigit(name[9]) && !strcmp(name + 10, ".bin");
+        int n = ok ? atoi(name + 7) : 0;
+        f.close();
+        if (n >= 1 && count < max) nums[count++] = n;
+    }
+    dir.close();
+    for (int i = 1; i < count; i++)  // newest (highest) first
+        for (int j = i; j > 0 && nums[j] > nums[j - 1]; j--) {
+            int t = nums[j];
+            nums[j] = nums[j - 1];
+            nums[j - 1] = t;
+        }
+    return count;
+}
+
+bool backup_notes(int n, restore::Notes *notes) {
+    char path[40], text[512];
+    snprintf(path, sizeof path, "/fm1/backup-%03d.txt", n);
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+    int len = f.read((uint8_t *)text, sizeof text - 1);
+    f.close();
+    if (len <= 0) return false;
+    text[len] = 0;
+    restore::parse_notes(text, notes);
+    return true;
+}
+
+static File restore_file;
+
+static bool read_backup(void *, uint32_t s, uint8_t *buf, char *err, size_t errlen) {
+    uint32_t a = s * writer::SECTOR;
+    if (!restore_file || !restore_file.seek(a) || restore_file.read(buf, writer::SECTOR) != writer::SECTOR) {
+        snprintf(err, errlen, "SD card: cannot read the backup at 0x%05lX", (unsigned long)a);
+        return false;
+    }
+    return true;
+}
+
+bool open_backup(int n, writer::Source *src, uint32_t *size) {
+    char path[40];
+    snprintf(path, sizeof path, "/fm1/backup-%03d.bin", n);
+    close_backup();
+    if (!sd_ready()) return false;
+    restore_file = SD.open(path, FILE_READ);
+    if (!restore_file) return false;
+    *size = restore_file.size();
+    src->read = read_backup;
+    src->ctx = nullptr;
+    return true;
+}
+
+void close_backup() {
+    if (restore_file) restore_file.close();
 }
 
 }  // namespace engine

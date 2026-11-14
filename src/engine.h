@@ -6,7 +6,9 @@
 #include <stdint.h>
 
 #include "jl.h"
+#include "restore.h"
 #include "usbkey.h"
+#include "writer.h"
 
 namespace engine {
 
@@ -37,6 +39,16 @@ extern Unit unit;  // set by connect()
 // --- a full backup to the SD card, checked against the chip's CRC32 and read
 // back from the card. path gets its path; smk: SMK-37 calibration marks seen.
 bool backup(const jl::Info &info, char *path, size_t pathlen, bool *smk, Progress progress);
+
+// --- restoring a backup from the SD card
+// The backups' numbers (/fm1/backup-NNN.bin), newest first: how many, at most max.
+int list_backups(int *nums, int max);
+// Backup n's .txt; false without one.
+bool backup_notes(int n, restore::Notes *notes);
+// Opens backup n to be read through src (restore::check, the writer), a
+// sector at a time, until close_backup(); size gets the file's size.
+bool open_backup(int n, writer::Source *src, uint32_t *size);
+void close_backup();
 
 // Keeps the session busy; false when the unit is gone.
 bool keepalive();

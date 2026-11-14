@@ -4,6 +4,7 @@
 
 #include "engine.h"
 #include "modes.h"
+#include "restore.h"
 #include "sd.h"
 #include "uboot_host.h"
 #include "ui.h"
@@ -106,12 +107,31 @@ static void read_progress(uint32_t done, uint32_t total) {
 static void compare_progress(uint32_t done, uint32_t total) {
     ui::status("Comparing %lu/%lu sectors", (unsigned long)done, (unsigned long)total);
 }
+// Reading the backup on the card: the unit is kept busy meanwhile.
+static void check_progress(uint32_t done, uint32_t total) {
+    static uint32_t last_ping;
+    ui::status("Checking the backup %3lu%%", (unsigned long)(done * 100 / total));
+    if (millis() - last_ping > 1000) {
+        last_ping = millis();
+        engine::keepalive();
+    }
+}
 static void write_progress(uint32_t done, uint32_t total) {
     ui::status("Writing %lu/%lu sectors - keep it on", (unsigned long)done, (unsigned long)total);
 }
 
+// This session's first backup: the unit as it was before anything was written
+// (a restore makes one if there is none yet).
+static char session_bak[48];
+
 static bool backup(const jl::Info &info, char *path = nullptr, size_t n = 0, bool *smk = nullptr) {
+    char own[48];
+    if (!path) {
+        path = own;
+        n = sizeof own;
+    }
     bool ok = engine::backup(info, path, n, smk, read_progress);
+    if (ok && !session_bak[0]) snprintf(session_bak, sizeof session_bak, "%s", path);
     ui::status(ok ? "Backup done" : "Backup FAILED");
     return ok;
 }
@@ -214,10 +234,186 @@ static void rescue(const jl::Info &info) {
     ulog("Done in %lu s. R restarts the unit.", (unsigned long)((millis() - t0) / 1000));
 }
 
+// ---------------------------------------------------------------------------
+// Restore a backup: the unit exactly as it was then (its own bootloader,
+// firmware, settings), all but the ranges the rescue never writes either.
+
+// What a backup's .txt says about the connected unit, for the list.
+static const char *whose(const jl::Info &info, int n) {
+    restore::Notes notes;
+    if (!engine::backup_notes(n, &notes)) return "no .txt";
+    if (!notes.has_id || !info.has_unique_id) return "no unit ID";
+    return memcmp(notes.unique_id, info.unique_id, 8) ? "OTHER unit" : "this unit";
+}
+
+// The backups, newest first, 7 a page. Its number, or 0.
+static int pick_backup(const jl::Info &info) {
+    static int nums[128];
+    int count = engine::list_backups(nums, 128);
+    if (!count) {
+        ulog("No backups (/fm1/backup-NNN.bin) on the card.");
+        return 0;
+    }
+    for (int first = 0;;) {
+        int shown = count - first < 7 ? count - first : 7;
+        ui::clear_log();
+        ui::console("Restore: which?", TFT_ORANGE);
+        ulog("%d backup%s, newest first:", count, count == 1 ? "" : "s");
+        for (int i = 0; i < shown; i++) ulog("%d  backup-%03d  %s", i + 1, nums[first + i], whose(info, nums[first + i]));
+        char keys[12] = "", *k = keys;
+        for (int i = 0; i < shown; i++) *k++ = '1' + i;
+        if (count > 7) *k++ = 'n';
+        *k++ = 27;
+        *k = 0;
+        ui::status(count > 7 ? "1-%d choose  N more  ESC cancel" : "1-%d choose  ESC cancel", shown);
+        int c = choose(keys);
+        if (c == 'n') {
+            first = first + 7 < count ? first + 7 : 0;
+            continue;
+        }
+        if (c >= '1' && c <= '7') return nums[first + c - '1'];
+        return 0;
+    }
+}
+
+static void restore_backup(const jl::Info &info) {
+    char err[128];
+    ui::clear_log();
+    ui::console("Restore backup", TFT_ORANGE);
+    bool fm1 = unit.model == engine::MODEL_FM1, smk37 = unit.model == engine::MODEL_SMK37;
+    if (info.chip_key != 0x980F || !(fm1 || smk37)) {
+        ulog("Unknown unit (key %04X, flash %06lX):", info.chip_key, (unsigned long)info.flash_id);
+        ulog("no restore for it.");
+        return;
+    }
+    if (!sd_ready()) {
+        ulog("No SD card: insert the one with the");
+        ulog("backups (FAT32), then L again.");
+        return;
+    }
+    int n = pick_backup(info);
+    if (!n) {
+        ulog("Cancelled: nothing written.");
+        return;
+    }
+
+    // whole, intact and this unit's: refused otherwise, before anything else
+    static writer::Source src;
+    static char name[16];
+    uint32_t size = 0;
+    snprintf(name, sizeof name, "backup-%03d", n);
+    ui::clear_log();
+    ui::console("Checking", TFT_YELLOW);
+    ulog("Restore %s.bin: checking it", name);
+    if (!engine::open_backup(n, &src, &size)) {
+        ulog("Cannot open %s.bin.", name);
+        return;
+    }
+    restore::Notes notes;
+    bool has_notes = engine::backup_notes(n, &notes);
+    restore::Result r;
+    if (!restore::check(info, smk37, size, has_notes ? &notes : nullptr, src, check_progress, &r, err, sizeof err)) {
+        ulog("Reading the unit failed: %s", err);
+        engine::close_backup();
+        return;
+    }
+    ulog("%s: %s", name, r.why);
+    if (!restore::allowed(r.verdict)) {
+        ui::console("Refused", TFT_RED);
+        if (r.verdict == restore::BAD_FILE) ulog("Not a whole, intact backup.");
+        else if (r.verdict == restore::OTHER_UNIT) ulog("It is not this unit's backup.");
+        else ulog("Nothing shows it is this unit's.");
+        ulog("Nothing written.");
+        ui::status("Refused: nothing written");
+        engine::close_backup();
+        return;
+    }
+
+    // what it holds, and what would change
+    const writer::Image &rescue_img = writer::image(smk37 ? writer::SMK37 : writer::FM1);
+    writer::Image img = writer::full_image(smk37 ? writer::SMK37 : writer::FM1, name, &src);
+    writer::Plan plan;
+    ui::status("Comparing the unit with the backup...");
+    if (!writer::plan(img, &plan, compare_progress, err, sizeof err)) {
+        ulog("Comparing failed: %s", err);
+        ulog("Nothing written.");
+        engine::close_backup();
+        return;
+    }
+    ui::clear_log();
+    ui::console("Restore backup", TFT_ORANGE);
+    ulog("%s, CRC32 %08lX, this unit's", name, (unsigned long)r.crc);
+    ulog(r.verdict == restore::SAME_BY_ID ? "(same unit ID)." : "(same factory data; no unit ID).");
+    ulog("Boot area: %s", r.boot_crc == rescue_img.boot_crc ? "the rescue's m-bootloader" : "not the rescue's");
+    ulog("The unit becomes as it was then:");
+    ulog("bootloader, firmware, settings.");
+    ulog(smk37 ? "Kept: 0xC0000-0xC1FFF (pairings, calib-" : "Kept: 0xFF000-0xFFFFF (key_mac).");
+    if (smk37) ulog("ration), 0xFF000-0xFFFFF (key_mac).");
+    if (!plan.to_write && !plan.to_erase) {
+        ulog("The unit already holds this backup.");
+        ui::status("Nothing to write");
+        engine::close_backup();
+        return;
+    }
+    ulog("%lu sectors to write, %lu to erase.", (unsigned long)plan.to_write, (unsigned long)plan.to_erase);
+    ui::status("ENTER continue  ESC cancel");
+    if (choose("\n\x1b") != '\n') {
+        ulog("Cancelled: nothing written.");
+        engine::close_backup();
+        return;
+    }
+
+    // the unit as it is now kept first, unless this session has a backup already
+    if (!session_bak[0]) {
+        ui::clear_log();
+        ui::console("Backup first", TFT_CYAN);
+        ulog("A backup of the unit as it is now.");
+        if (!backup(info)) {
+            ulog("No valid backup: nothing written.");
+            engine::close_backup();
+            return;
+        }
+    }
+    ui::clear_log();
+    ui::console("Ready to write", TFT_ORANGE);
+    ulog("Restore %s. As it was: %s", name, session_bak + 5);
+    ulog("%lu sectors to write, %lu to erase,", (unsigned long)plan.to_write, (unsigned long)plan.to_erase);
+    ulog("in %lu runs; the boot area last.", (unsigned long)plan.runs);
+    ulog("Do not switch the unit off or unplug it");
+    ulog("while writing.");
+    ui::status("W write now  ESC cancel");
+    if (choose("w\x1b") != 'w') {
+        ulog("Cancelled: nothing written.");
+        engine::close_backup();
+        return;
+    }
+    ui::clear_log();
+    ui::console("Writing", TFT_YELLOW);
+    ulog("Restoring %s", name);
+    uint32_t t0 = millis();
+    bool ok = writer::apply(img, plan, ulog, write_progress, err, sizeof err);
+    engine::close_backup();
+    if (!ok) {
+        ui::console("RESTORE FAILED", TFT_RED);
+        ulog("%s", err);
+        ulog("Do NOT switch the unit off.");
+        ulog("As it was: %s", session_bak);
+        ulog("L tries again (the card back in, if");
+        ulog("it was the card); R restarts the unit.");
+        return;
+    }
+    ui::console("Backup restored", TFT_GREEN);
+    ulog("Done in %lu s. R restarts the unit.", (unsigned long)((millis() - t0) / 1000));
+}
+
 static void connected_menu(const jl::Info &info) {
     bool can_rescue = unit.model == engine::MODEL_FM1 || unit.model == engine::MODEL_SMK37;
+    if (can_rescue) {
+        ulog("ENTER backup  W rescue  L restore one");
+        ulog("R restart the unit  ESC end");
+    }
     for (;;) {
-        ui::status(can_rescue ? "ENTER backup W rescue R restart ESC end" : "ENTER backup  R restart unit  ESC end");
+        ui::status(can_rescue ? "ENTER backup W rescue L restore R ESC" : "ENTER backup  R restart unit  ESC end");
         uint32_t last_ping = millis();
         int k = 0;
         while (!(k = ui::read_key())) {
@@ -238,6 +434,11 @@ static void connected_menu(const jl::Info &info) {
             ulog("No rescue image for an %s.", unit.name);
         } else if (k == 'w') {
             rescue(info);
+            delay(500);
+        } else if (k == 'l' && !can_rescue) {
+            ulog("No restore for an %s.", unit.name);
+        } else if (k == 'l') {
+            restore_backup(info);
             delay(500);
         } else if (k == 'r') {
             char err[96];
