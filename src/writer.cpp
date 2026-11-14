@@ -11,7 +11,6 @@ extern "C" const uint8_t rescue_smk37_boot[], rescue_smk37_boot_end[];
 
 namespace writer {
 
-static constexpr uint32_t BOOT_AREA = 0x4000;
 static constexpr uint32_t FLASH_SIZE = 0x100000;
 static uint8_t blank[SECTOR];
 static uint8_t sector_buf[SECTOR];
@@ -20,28 +19,40 @@ static uint8_t piece_buf[PIECE * SECTOR];  // a Source's sectors, read before th
 const Image &image(Board b) {
     static const Image fm1 = {
         "FM-1", rescue_fm1_boot, (uint32_t)(rescue_fm1_boot_end - rescue_fm1_boot), RESCUE_FM1_BOOT_CRC32, 0, 0,
-        nullptr,
+        nullptr, 0,
     };
     // BTIF (Bluetooth address, pairings) and USRTRIM (the factory calibration)
     static const Image smk37 = {
         "SMK-37", rescue_smk37_boot, (uint32_t)(rescue_smk37_boot_end - rescue_smk37_boot), RESCUE_SMK37_BOOT_CRC32,
-        0xC0000, 0xC2000, nullptr,
+        0xC0000, 0xC2000, nullptr, 0,
     };
     return b == SMK37 ? smk37 : fm1;
 }
 
-Image full_image(Board b, const char *name, Source *src) {
+Image full_image(Board b, const char *name, Source *src, uint32_t start) {
     Image img = image(b);
     img.name = name;
     img.boot = nullptr;
     img.boot_len = img.boot_crc = 0;
     img.src = src;
+    img.start = start;
     return img;
 }
 
+// Never written: 0xFF000-, the board's range, and below the image's start.
 static bool is_protected(const Image &img, uint32_t s) {
     uint32_t a = s * SECTOR;
-    return a >= END || (a >= img.keep_lo && a < img.keep_hi);
+    return a >= END || a < img.start || (a >= img.keep_lo && a < img.keep_hi);
+}
+
+// The image's start is usable: a sector multiple, below the protected range.
+static bool start_ok(const Image &img, char *err, size_t errlen) {
+    bool keep = img.keep_hi > img.keep_lo;
+    if (img.start % SECTOR || img.start >= END || (keep && img.start >= img.keep_lo)) {
+        snprintf(err, errlen, "bad start address 0x%05lX", (unsigned long)img.start);
+        return false;
+    }
+    return true;
 }
 
 // Sector s of a Source into buf, as plan() read it.
@@ -94,6 +105,7 @@ bool image_ok(const Image &img, char *err, size_t errlen) {
 
 bool plan(const Image &img, Plan *p, Progress progress, char *err, size_t errlen) {
     memset(p, 0, sizeof *p);
+    if (!start_ok(img, err, errlen)) return false;
     bool prev = false;
     for (uint32_t s = 0; s < SECTORS; s++) {
         bool change = false;
@@ -210,11 +222,18 @@ static bool check_written(const Image &img, uint32_t lo, uint32_t hi, char *err,
 }
 
 bool apply(const Image &img, const Plan &p, Log log, Progress progress, char *err, size_t errlen) {
+    if (!start_ok(img, err, errlen)) return false;
+    for (uint32_t s = 0; s < img.start / SECTOR; s++)
+        if (p.change[s]) {  // a plan made for another start
+            snprintf(err, errlen, "the plan writes below 0x%05lX: not this image's", (unsigned long)img.start);
+            return false;
+        }
     // the protected ranges as they are now: they must read the same afterwards
     bool keep = img.keep_hi > img.keep_lo;
-    uint32_t kept_crc = 0, top_crc = 0;
+    uint32_t kept_crc = 0, top_crc = 0, below_crc = 0;
     if ((keep && !jl::crc32(img.keep_lo, img.keep_hi - img.keep_lo, &kept_crc, err, errlen)) ||
-        !jl::crc32(END, FLASH_SIZE - END, &top_crc, err, errlen))
+        !jl::crc32(END, FLASH_SIZE - END, &top_crc, err, errlen) ||
+        (img.start && !jl::crc32(0, img.start, &below_crc, err, errlen)))
         return false;
 
     uint32_t total = p.to_write + p.to_erase, done = 0;
@@ -226,12 +245,21 @@ bool apply(const Image &img, const Plan &p, Log log, Progress progress, char *er
         return false;
 
     if (keep) {
-        if (!check_written(img, 0, img.keep_lo, err, errlen) || !check_written(img, img.keep_hi, END, err, errlen))
+        if (!check_written(img, img.start, img.keep_lo, err, errlen) ||
+            !check_written(img, img.keep_hi, END, err, errlen))
             return false;
-    } else if (!check_written(img, 0, END, err, errlen)) {
+    } else if (!check_written(img, img.start, END, err, errlen)) {
         return false;
     }
     uint32_t crc;
+    if (img.start) {
+        if (!jl::crc32(0, img.start, &crc, err, errlen)) return false;
+        if (crc != below_crc) {
+            snprintf(err, errlen, "final check: kept 0x00000-0x%05lX changed", (unsigned long)(img.start - 1));
+            return false;
+        }
+        log("Kept as it was: 0x00000-0x%05lX (not written)", (unsigned long)(img.start - 1));
+    }
     if (keep) {
         if (!jl::crc32(img.keep_lo, img.keep_hi - img.keep_lo, &crc, err, errlen)) return false;
         if (crc != kept_crc) {
@@ -249,7 +277,8 @@ bool apply(const Image &img, const Plan &p, Log log, Progress progress, char *er
         log("Verified: as the image, 0x%05lX-0x%05lX and 0x%05lX- unchanged", (unsigned long)img.keep_lo,
             (unsigned long)(img.keep_hi - 1), (unsigned long)END);
     else
-        log("Verified: 0x00000-0x%05lX as the image, 0x%05lX- unchanged", (unsigned long)(END - 1), (unsigned long)END);
+        log("Verified: 0x%05lX-0x%05lX as the image, 0x%05lX- unchanged", (unsigned long)img.start,
+            (unsigned long)(END - 1), (unsigned long)END);
     return true;
 }
 

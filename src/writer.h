@@ -8,7 +8,9 @@
 //
 // The same rules restore a whole backup instead (a Source: the file on the SD
 // card, a sector at a time): every writable sector as the backup has it, the
-// boot area included, written last.
+// boot area included, written last. Or, from a start address (0x4000: the
+// library's switch, "keep this unit's bootloader"), every writable sector from
+// there up: below it nothing is written, and it must read the same afterwards.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -41,11 +43,15 @@ struct Image {
     uint32_t boot_crc;           // as built (src/rescue_info.h)
     uint32_t keep_lo, keep_hi;   // a protected range below END (empty: equal)
     Source *src;                 // a full image to install instead (boot: unused)
+    uint32_t start;              // first byte written (a SECTOR multiple, below keep_lo); 0: all
 };
 
 const Image &image(Board b);
-// A full image from src for board b: the board's protected ranges, nothing else.
-Image full_image(Board b, const char *name, Source *src);
+static constexpr uint32_t BOOT_AREA = 0x4000;  // 0x0-0x3FFF: the boot area
+
+// A full image from src for board b: the board's protected ranges, nothing
+// else. start: 0 writes the boot area too (last); BOOT_AREA keeps the unit's.
+Image full_image(Board b, const char *name, Source *src, uint32_t start = 0);
 
 // The embedded boot area is intact (their CRC32s match the build's).
 bool image_ok(const Image &img, char *err, size_t errlen);
@@ -61,7 +67,7 @@ struct Plan {
 // (with or without a backup on the SD card).
 bool plan(const Image &img, Plan *p, Progress progress, char *err, size_t errlen);
 
-// Notes the chip's CRC32 of every protected range, then erases, programs and
+// Notes the chip's CRC32 of every protected range (and of 0x0-start), then erases, programs and
 // verifies run by run (a run that does not verify is done once more, then the
 // write stops), then checks every written range against the image and every
 // protected one against its CRC from before. From a Source: runs go in pieces

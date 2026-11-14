@@ -447,6 +447,58 @@ static void test_final_check_reads_file() {
     CHECK(f.reads == writable + 1 + writable);
 }
 
+static void test_start_address() {
+    puts("restore: from 0x4000 the boot area is kept; from 0 it is written");
+    fake::reset();
+    make_smk37(fake::flash, 3);
+    File f;
+    f.data.assign(fake::flash, fake::flash + SIZE);
+    for (uint32_t a = 0; a < 0x4000; a++) f.data[a] ^= 0x3C;   // the file's boot area differs
+    memset(f.data.data() + 0x30000, 0x11, 0x3000);              // and some firmware
+    std::vector<uint8_t> unit(fake::flash, fake::flash + SIZE);
+    static writer::Source src;
+    src = {file_read, &f, {}};
+    char err[128];
+    writer::Plan plan;
+    writer::Image keep = writer::full_image(writer::SMK37, "snap", &src, writer::BOOT_AREA);
+    CHECK(writer::plan(keep, &plan, no_progress, err, sizeof err));
+    CHECK(plan.to_write == 3 && plan.to_erase == 0);
+    for (uint32_t s = 0; s < 4; s++) CHECK(!plan.change[s]);
+    fake::ops.clear();
+    CHECK(writer::apply(keep, plan, verbose, no_progress, err, sizeof err));
+    CHECK(!fake::touched(0, 0x4000));
+    CHECK(!memcmp(fake::flash, unit.data(), 0x4000));
+    CHECK(!memcmp(fake::flash + 0x4000, f.data.data() + 0x4000, 0xC0000 - 0x4000));
+    CHECK(protected_untouched());
+    // a plan made from 0 is not applied to an image that starts at 0x4000
+    writer::Image exact = writer::full_image(writer::SMK37, "snap", &src, 0);
+    CHECK(writer::plan(exact, &plan, no_progress, err, sizeof err));
+    CHECK(plan.to_write == 4 && plan.change[0]);
+    fake::ops.clear();
+    CHECK(!writer::apply(keep, plan, quiet, no_progress, err, sizeof err));
+    CHECK(fake::ops.empty());
+    // exactly: the boot area written (last), everything else already equal
+    CHECK(writer::apply(exact, plan, quiet, no_progress, err, sizeof err));
+    CHECK(!memcmp(fake::flash, f.data.data(), 0x4000));
+    CHECK((fake::erased_sectors() == std::vector<uint32_t>{0, 1, 2, 3}));
+    CHECK(protected_untouched());
+    // a start that is not a sector multiple, or inside the protected range: refused
+    writer::Image bad = writer::full_image(writer::SMK37, "snap", &src, 0x4001);
+    CHECK(!writer::plan(bad, &plan, no_progress, err, sizeof err));
+    bad = writer::full_image(writer::SMK37, "snap", &src, 0xC0000);
+    CHECK(!writer::plan(bad, &plan, no_progress, err, sizeof err));
+    // the FM-1 (no range below 0xFF000): kept from 0x4000 too
+    fake::reset();
+    make_smk37(fake::flash, 3);
+    unit.assign(fake::flash, fake::flash + SIZE);
+    writer::Image fm1 = writer::full_image(writer::FM1, "snap", &src, writer::BOOT_AREA);
+    CHECK(writer::plan(fm1, &plan, no_progress, err, sizeof err));
+    fake::ops.clear();
+    CHECK(writer::apply(fm1, plan, quiet, no_progress, err, sizeof err));
+    CHECK(!fake::touched(0, 0x4000) && !fake::touched(0xFF000, SIZE));
+    CHECK(!memcmp(fake::flash, unit.data(), 0x4000));
+}
+
 int main() {
     test_notes();
     test_rescue_unchanged();
@@ -458,6 +510,7 @@ int main() {
     test_read_error_while_writing();
     test_file_changed();
     test_final_check_reads_file();
+    test_start_address();
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
