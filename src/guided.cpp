@@ -7,7 +7,8 @@
 //   2        connect the cable
 //   3        a backup card (optional; shows whether one is in)
 //            switch it on: the Cardputer waits for it, connects, finds out
-//            which unit it is
+//            which unit it is (its own firmware started instead, and it
+//            is USB MIDI: M asks it over MIDI to switch, the soft key)
 //            backup (with a card) or, without one, C: go on without
 //            checking
 //   Y        repair (confirm)
@@ -105,6 +106,9 @@ static bool key_poll(const usbkey::KeyStats *) {
     return false;
 }
 
+// While the soft key's answer is awaited: the spinner, ESC cancels.
+static bool midi_wait() { return key_poll(nullptr); }
+
 static void answered(bool) { ui::page("connecting", ui::CYAN, "Connecting", "Keep it switched on and plugged in.", nullptr, nullptr); }
 static bool no_cancel() { return false; }
 static void bar(uint32_t done, uint32_t total) { ui::progress(done, total); }
@@ -136,6 +140,31 @@ static bool connect(jl::Info *info) {
         char err[96];
         engine::ConnectResult c = engine::connect(info, err, sizeof err);
         if (c == engine::CONN_OK) return true;
+        // its own firmware runs: if it is USB MIDI, M asks it to switch over
+        // (the soft key); nothing is sent without M
+        if (c == engine::CONN_NOT_ROM && engine::other.midi == usbmidi::FOUND) {
+            Page p = {"error", ui::ORANGE, "It started normally",
+                      "Its own firmware is running. M asks it over MIDI to switch.", "M", "ask over MIDI",
+                      "off, 4: retry"};
+            int k = ask(p, "m4\x1b", true);
+            if (k == 'm') {
+                ui::page("connecting", ui::CYAN, "Asking over MIDI",
+                         "Waiting up to 30 s for it to restart. Keep it on and plugged in.", nullptr,
+                         "esc cancels", nullptr);
+                c = engine::soft_key(info, midi_wait, err, sizeof err);
+                if (c == engine::CONN_OK) return true;
+                Page q = c == engine::CONN_NO_ANSWER || c == engine::CONN_NOT_BACK
+                             ? Page{"error", ui::RED, "No answer over MIDI",
+                                    "Its firmware may not support it. Switch it off.", "4", "to try again", "esc"}
+                         : c == engine::CONN_CANCELLED
+                             ? Page{"error", ui::ORANGE, "Cancelled", "Switch the synth off.", "4", "to try again", "esc"}
+                             : Page{"error", ui::RED, "MIDI request failed", "Switch the synth off, check the cable.", "4",
+                                    "to try again", "esc"};
+                k = ask(q, "4\x1b", true);
+            }
+            if (k != '4') finish();
+            modes::restart_into(modes::GUIDED_SWITCH_ON);
+        }
         // the USB host is up: a new try starts with a restart of the Cardputer
         Page p = c == engine::CONN_NOT_ROM
                      ? Page{"error", ui::ORANGE, "It started normally", "Its own firmware is running. Switch it off.", "4",

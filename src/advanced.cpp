@@ -451,13 +451,71 @@ static void connected_menu(const jl::Info &info) {
     }
 }
 
+static uint32_t soft_key_start;
+
+static bool soft_key_tick() {
+    static uint32_t last_draw;
+    uint32_t now = millis();
+    if (now - last_draw > 500) {
+        last_draw = now;
+        ui::status("Waiting %lus / %lus  any key cancels", (unsigned long)((now - soft_key_start) / 1000),
+                   (unsigned long)(engine::SOFT_KEY_MS / 1000));
+    }
+    return ui::any_key_cancel();
+}
+
+// A device that is not the download mode (a unit running its firmware, ...):
+// only for USB MIDI, and only on S, the soft key. No keepalive here: the
+// loader's ping would be sent to the device. True: connected after all.
+static bool offer_soft_key(jl::Info *info, char *err, size_t errlen) {
+    const engine::Other &o = engine::other;
+    ui::console("Not download mode", TFT_ORANGE);
+    ulog("%04X:%04X \"%s\" is running.", o.vid, o.pid, o.product[0] ? o.product : "no product name");
+    if (o.midi != usbmidi::FOUND) {
+        ulog("Not USB MIDI (%s):", usbmidi::find_name(o.midi));
+        ulog("nothing to send it. Switch it off and");
+        ulog("try again with the key at power-on.");
+        return false;
+    }
+    ulog("USB MIDI: interface %u, OUT EP %02X.", o.out.iface, o.out.ep);
+    ulog("S  send the download-mode request over");
+    ulog("   MIDI (F0 22 24 35 7D F7, M-Flasher's");
+    ulog("   soft key; nothing is written)");
+    ulog("ESC end (switch it off, try again)");
+    ui::status("S MIDI request  ESC end");
+    ui::wait_released();
+    int k;
+    while ((k = ui::read_key()) != 's' && k != 27) delay(20);
+    if (k != 's') {
+        ulog("Nothing sent.");
+        return false;
+    }
+    ui::wait_released();
+    ui::clear_log();
+    ui::console("MIDI request", TFT_YELLOW);
+    soft_key_start = millis();
+    engine::ConnectResult c = engine::soft_key(info, soft_key_tick, err, errlen);
+    if (c == engine::CONN_OK) return true;
+    switch (c) {
+        case engine::CONN_NO_ANSWER: ui::console("No answer", TFT_RED); break;
+        case engine::CONN_NOT_BACK: ui::console("Not back", TFT_RED); break;
+        case engine::CONN_CANCELLED: ui::console("Cancelled", TFT_ORANGE); break;
+        case engine::CONN_LOADER_FAILED: ui::console("Loader failed", TFT_RED); break;
+        default: ui::console("MIDI failed", TFT_RED); break;
+    }
+    ui::wait_released();
+    return false;
+}
+
 static void run_session() {
     if (!enter_download_mode()) return;
     ui::status("Connecting...");
     jl::Info info;
     char err[96];
     engine::ConnectResult c = engine::connect(&info, err, sizeof err);
-    if (c != engine::CONN_OK) {
+    if (c == engine::CONN_NOT_ROM && engine::other.vid) {
+        if (!offer_soft_key(&info, err, sizeof err)) return;
+    } else if (c != engine::CONN_OK) {
         ui::console(c == engine::CONN_LOADER_FAILED ? "Loader failed" : "No connection", TFT_RED);
         ulog("%s", err);
         return;
