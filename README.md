@@ -38,6 +38,13 @@ that hangs on its first instruction (nothing on USB at all). Each was backed
 up and repaired; a backup reads 1 MiB in about 2 s and matches the chip's
 CRC32, a repair takes 2 to 8 s.
 
+A unit whose firmware starts normally does not answer the power-on key (seen
+on an SMK-37 Elite with a custom firmware and an FM-1 with FMini-1): it is
+reached over USB MIDI instead, with
+[M-Flasher](https://github.com/jvitkauskas/m-flasher)'s soft key (below).
+That path is built but **not yet tested on a real unit** by us, and whether
+those two firmwares answer the soft key is unknown.
+
 ## Install
 
 Download `synth-rescue-vX.Y.Z-cardputer-adv.bin` from the
@@ -75,7 +82,8 @@ loader through the ROM and reads, erases and writes the flash
 | Path | What |
 |---|---|
 | `src/usbkey.cpp` | USB_KEY, calibration pulses, self-tests |
-| `src/uboot_host.cpp` | USB host, Bulk-Only Transport |
+| `src/uboot_host.cpp` | USB host, Bulk-Only Transport; the soft key's MIDI transfer |
+| `src/usb_midi.cpp` | USB MIDI descriptors and packets (host-tested) |
 | `src/jl.cpp`, `src/mflr_loader.h` | ROM and loader protocol; M-Flasher's loader (MIT) |
 | `src/writer.cpp` | the rescue install, and a backup's restore |
 | `src/restore.cpp` | whether a backup is whole and the connected unit's |
@@ -100,7 +108,7 @@ pio run -t upload
 ```
 
 The writer and the restore's checks also build on a PC, with a simulated
-unit: `tests/host/run.sh` (any C++17 compiler; CI runs it too).
+unit, and so do the USB MIDI helpers: `tests/host/run.sh` (any C++17 compiler; CI runs it too).
 
 The stock Arduino-ESP32 libraries are enough. Their ESP-IDF has
 `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` set, which cancels every USB
@@ -132,6 +140,11 @@ twice never skips one; everything else goes on by itself.
 A problem says what to do and has its own "try again" key; **V** shows the
 log; **ESC** goes back.
 
+**It started normally**: the synth's own firmware came up instead of the
+download mode. If it is a USB MIDI device, **M** asks it over MIDI to switch
+(the soft key, below); otherwise, or if it does not answer, switch it off and
+**4** to try again.
+
 **Advanced mode** (**A** on the first page): the log on screen and each step
 under your control:
 
@@ -142,8 +155,26 @@ under your control:
   unit, ESC ends.
 - **H**: key only; on **MOVE CABLE TO PC**, move the cable to the PC, keeping
   the unit on.
+- **Not download mode**: the unit's firmware started instead; the log shows
+  its `vid:pid`, product name and whether it is USB MIDI. For a USB MIDI
+  device, **S** sends the soft key (below); ESC ends.
 
 Run on battery, with the unit off when you start.
+
+**The soft key** (after [M-Flasher](https://github.com/jvitkauskas/m-flasher),
+`src/midi.rs`): M-VAVE's firmwares (FM-1 015, SMK-37 Pro/Elite 016) and
+Felucca answer the SysEx `F0 22 24 35 7D F7` on their first MIDI port by
+restarting into the ROM's download mode (`4C4A:8057`). A unit that is
+running normally ignores the power-on key, so when the Cardputer finds a USB
+MIDI device instead of the download mode, it offers to send that message (as
+USB-MIDI packets `04 F0 22 24` `07 35 7D F7`, cable 0, to the first
+MIDIStreaming interface's bulk OUT endpoint), only when you press the key.
+It then waits up to 30 s for the unit to leave USB and come back as the
+download mode, and goes on as after the power-on key. Nothing else is sent
+to a device that is not the download mode, and nothing is written in this
+step. A firmware that does not know the message ignores it: the log then says
+so. Every step is in the log (`/fm1/log.txt`). Not yet tried on a real unit
+with this app.
 
 ## Restore a backup (advanced mode, L)
 
