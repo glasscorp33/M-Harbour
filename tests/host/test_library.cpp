@@ -131,17 +131,21 @@ static void test_suggestion() {
     library::suggest("", "14/11/26", "", out, sizeof out);
     CHECK_STR(out, "14/11/26");
 
-    library::auto_name("Dub 1", "", "", "SMK-37", out, sizeof out);
+    library::auto_name("", "Dub 1", "", "", "SMK-37", out, sizeof out);
     CHECK_STR(out, "auto Dub 1");
-    library::auto_name("Dub 1", "", "14/11/26", "SMK-37", out, sizeof out);
+    library::auto_name("", "Dub 1", "", "14/11/26", "SMK-37", out, sizeof out);
     CHECK_STR(out, "auto Dub 1 14/11/26");
-    library::auto_name("auto Dub 1", "", "", "SMK-37", out, sizeof out);
+    library::auto_name("", "auto Dub 1", "", "", "SMK-37", out, sizeof out);
     CHECK_STR(out, "auto Dub 1");  // not "auto auto"
-    library::auto_name("", "FMini-1", "", "FM-1", out, sizeof out);
+    library::auto_name("", "", "FMini-1", "", "FM-1", out, sizeof out);
     CHECK_STR(out, "auto FMini-1");
-    library::auto_name(nullptr, nullptr, nullptr, "FM-1", out, sizeof out);
+    library::auto_name(nullptr, nullptr, nullptr, nullptr, "FM-1", out, sizeof out);
     CHECK_STR(out, "auto FM-1");
-    library::auto_name("abcdefghijklmnopqrstuvwxyz0123456789", "", "", "", out, sizeof out);
+    library::auto_name("Seq A", "Test 1", "", "", "SMK-37", out, sizeof out);
+    CHECK_STR(out, "auto before Seq A");
+    library::auto_name("auto Seq A", "Test 1", "", "14/11/26", "SMK-37", out, sizeof out);
+    CHECK_STR(out, "auto before Seq A 14/11/26");
+    library::auto_name("", "abcdefghijklmnopqrstuvwxyz0123456789", "", "", "", out, sizeof out);
     CHECK(strlen(out) == library::NAME_CHARS && !strncmp(out, "auto abc", 8));
 }
 

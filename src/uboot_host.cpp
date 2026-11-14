@@ -441,9 +441,9 @@ static Result transfer(const uint8_t *cdb, uint8_t cdb_len, uint8_t *buf, uint32
 }
 
 Result execute(const uint8_t *cdb, uint8_t cdb_len, uint8_t *buf, uint32_t len, bool in,
-               uint32_t *moved, char *err, size_t errlen) {
+               uint32_t *moved, char *err, size_t errlen, bool quiet) {
     Result r = transfer(cdb, cdb_len, buf, len, in, moved, err, errlen);
-    if (r != OK && trace) trace("USB: %s: %s", r == REFUSED ? "refused" : "FAILED", err);
+    if (r != OK && trace && !quiet) trace("USB: %s: %s", r == REFUSED ? "refused" : "FAILED", err);
     // a refused command leaves the transport in order; a failed one is reset
     if (r == FAILED && connected()) reset_recovery();
     return r;

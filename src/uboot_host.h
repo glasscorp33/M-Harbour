@@ -48,6 +48,6 @@ void close_device(Log log);
 // One Bulk-Only Transport command. in: data from the device into buf.
 // moved: data bytes actually transferred. err: text for a non-OK result.
 Result execute(const uint8_t *cdb, uint8_t cdb_len, uint8_t *buf, uint32_t len, bool in,
-               uint32_t *moved, char *err, size_t errlen);
+               uint32_t *moved, char *err, size_t errlen, bool quiet = false);
 
 }  // namespace host

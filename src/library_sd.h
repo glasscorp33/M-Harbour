@@ -50,7 +50,7 @@ bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware,
 // The auto-save before a LOAD: unless the flash equals a snapshot already
 // there (its CRC32, and its file checked), saved as "auto <current>".
 // what: what happened, for the screen ("equals 0003 Dub 1", "0005 auto ...").
-bool auto_save(Unit *u, const jl::Info &info, const char *firmware, char *what, size_t whatlen,
+bool auto_save(Unit *u, const jl::Info &info, const char *firmware, const char *target, char *what, size_t whatlen,
                engine::Progress progress);
 // IMPORT: copies an old backup (checked by the caller with restore::check)
 // into the library with a name; the copy's CRC32 must be the backup's.

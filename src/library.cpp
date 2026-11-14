@@ -93,11 +93,21 @@ void suggest(const char *firmware, const char *date, const char *model, char *ou
 
 static bool starts_auto(const char *s) { return !strncmp(s, "auto ", 5) || !strncmp(s, "Auto ", 5); }
 
-void auto_name(const char *current, const char *firmware, const char *date, const char *model, char *out,
-               size_t outlen) {
+void auto_name(const char *target, const char *current, const char *firmware, const char *date, const char *model,
+               char *out, size_t outlen) {
     char cur[NAME_CHARS + 1], d[NAME_CHARS + 1], s[2 * NAME_CHARS + 16];
-    clean_name(current, cur, sizeof cur);
     clean_name(date, d, sizeof d);
+    // what the unit held is unknown (it may have changed since current was
+    // loaded), so the name says when it was made: before loading <target>
+    clean_name(target, cur, sizeof cur);
+    const char *t = cur;
+    while (starts_auto(t)) t += 5;
+    if (*t) {
+        snprintf(s, sizeof s, "auto before %s%s%s", t, d[0] ? " " : "", d);
+        clean_name(s, out, outlen);
+        return;
+    }
+    clean_name(current, cur, sizeof cur);
     const char *c = cur;
     while (starts_auto(c)) c += 5;
     if (*c) snprintf(s, sizeof s, "auto %s%s%s", c, d[0] ? " " : "", d);

@@ -194,3 +194,18 @@ Builds on the existing code, no rewrite:
   flagging in section 5 exist for this; test before relying on it.
 - Timing of a full switch on real hardware (estimate: under a minute including
   power cycling; the backup itself takes about 2 s).
+
+## Hardware results (2026-11-14, SMK-37 Elite, 0.3.0-fm.1)
+
+- Library: SAVE "Test 1" (1 MiB in 3.7 s), LOAD of the identical state: auto-save
+  found the equal snapshot, nothing stored or written ("nothing to do").
+- Real switch: a project saved on the Elite, then LOAD "Test 1": the auto-save
+  kept the new state first (CRC32 CA16BF6B), boot areas equal (C9D8D66E), 2
+  sectors written from 0x4000 (0x7C000 project slot, 0xFE000 settings), all
+  verified, boot area and protected ranges untouched, 22 s in all. The Elite
+  started without the project; loading the auto-save brought it back.
+  **Round trip confirmed.**
+- Battery reading works (74 %, 3896 mV).
+- 0.3.0-fm.2: auto-saves are named "auto before <snapshot being loaded>"
+  (what the unit held is unknown); the restart's expected USB error is no
+  longer logged.

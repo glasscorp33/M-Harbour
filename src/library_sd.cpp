@@ -259,7 +259,7 @@ bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware,
     return true;
 }
 
-bool auto_save(Unit *u, const jl::Info &info, const char *firmware, char *what, size_t whatlen,
+bool auto_save(Unit *u, const jl::Info &info, const char *firmware, const char *target, char *what, size_t whatlen,
                engine::Progress progress) {
     char err[96];
     uint32_t chip;
@@ -288,7 +288,7 @@ bool auto_save(Unit *u, const jl::Info &info, const char *firmware, char *what, 
     for (int k = 0; k < n; k++)
         if (scratch[k].number == cur) cur_name = scratch[k].name;
     char name[library::NAME_CHARS + 1];
-    library::auto_name(cur_name, firmware, today(), u->model, name, sizeof name);
+    library::auto_name(target, cur_name, firmware, today(), u->model, name, sizeof name);
     int num;
     if (!save(u, info, name, firmware, library::SRC_AUTO, &num, progress)) return false;
     char base[library::BASE_LEN];

@@ -537,7 +537,7 @@ static bool autosave_hook(void *ctx, char *err, size_t errlen) {
     ui::clear_log();
     ui::console("Auto-save", TFT_CYAN);
     ulog("First the unit as it is now:");
-    if (!libsd::auto_save(&lib_unit, *c->info, fw_hint, c->autosave, sizeof c->autosave, read_progress)) {
+    if (!libsd::auto_save(&lib_unit, *c->info, fw_hint, c->e->name, c->autosave, sizeof c->autosave, read_progress)) {
         snprintf(err, errlen, "the auto-save could not be made");
         return false;
     }

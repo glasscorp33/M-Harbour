@@ -413,7 +413,8 @@ bool restart(char *err, size_t errlen) {
     args[4] = LOADER_ARG >> 8;
     args[5] = LOADER_ARG;
     cdb(c, JUMP, args, 6);
-    host::execute(c, 16, r, 16, true, &moved, err, errlen);
+    // the unit resets while answering, so this usually "fails": not logged
+    host::execute(c, 16, r, 16, true, &moved, err, errlen, true);
     return true;
 }
 

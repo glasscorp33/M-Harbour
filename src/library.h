@@ -48,7 +48,7 @@ bool parse_legacy_file(const char *file, int *number);
 void suggest(const char *firmware, const char *date, const char *model, char *out, size_t outlen);
 // An auto-save's name: "auto <current>" (an "auto " already there is not
 // doubled) plus the date if known; without a current, "auto <suggestion>".
-void auto_name(const char *current, const char *firmware, const char *date, const char *model, char *out,
+void auto_name(const char *target, const char *current, const char *firmware, const char *date, const char *model, char *out,
                size_t outlen);
 
 // --- a snapshot's .txt
