@@ -8,9 +8,7 @@
 namespace restore {
 
 static constexpr uint32_t SECTOR = writer::SECTOR;
-static uint8_t buf[SECTOR];
-static uint8_t file_trim[SECTOR], file_top[SECTOR];  // the backup's 0xC1000 and 0xFF000 sectors
-static uint8_t unit_trim[SECTOR], unit_top[SECTOR];
+static uint8_t buf[SECTOR], unit[SECTOR];  // a sector of the file, the same of the unit
 
 // ---------------------------------------------------------------------------
 // The .txt
@@ -92,7 +90,7 @@ static void hex_id(const uint8_t id[8], char out[17]) {
 }
 
 bool check(const jl::Info &info, bool smk37, uint32_t size, const Notes *notes, const writer::Source &file,
-           Result *r, char *err, size_t errlen) {
+           writer::Progress progress, Result *r, char *err, size_t errlen) {
     memset(r, 0, sizeof *r);
     // --- the file itself
     if (size != FLASH_SIZE)
@@ -102,6 +100,14 @@ bool check(const jl::Info &info, bool smk37, uint32_t size, const Notes *notes, 
         return verdict(r, BAD_FILE, "its .txt lacks the chip key, flash ID or CRC32");
     if (notes->has_size && notes->size != FLASH_SIZE)
         return verdict(r, BAD_FILE, "its .txt says %lu bytes", (unsigned long)notes->size);
+    if (notes->chip_key != info.chip_key || notes->flash_id != info.flash_id)
+        return verdict(r, OTHER_UNIT, "from chip key %04X flash %06lX, not %04X %06lX", notes->chip_key,
+                       (unsigned long)notes->flash_id, info.chip_key, (unsigned long)info.flash_id);
+
+    // Read twice; the second time the factory data are compared with the
+    // unit's as they come by.
+    uint32_t mac_off = KEY_MAC % SECTOR, mac_len = SECTOR - mac_off;
+    bool file_smk = false, trim_same = true, mac_same = false, unique = false;
     uint32_t crc[2];
     for (int pass = 0; pass < 2; pass++) {
         crc[pass] = 0;
@@ -110,8 +116,21 @@ bool check(const jl::Info &info, bool smk37, uint32_t size, const Notes *notes, 
             if (!file.read(file.ctx, s, buf, e, sizeof e))
                 return verdict(r, BAD_FILE, "cannot read it at 0x%05lX: %s", (unsigned long)(s * SECTOR), e);
             crc[pass] = jl::crc32_update(crc[pass], buf, SECTOR);
-            if (pass == 1 && s == USRTRIM / SECTOR) memcpy(file_trim, buf, SECTOR);
-            if (pass == 1 && s == FLASH_SIZE / SECTOR - 1) memcpy(file_top, buf, SECTOR);
+            if (progress && s % 16 == 15) progress(pass * (FLASH_SIZE / SECTOR) + s + 1, 2 * FLASH_SIZE / SECTOR);
+            if (pass == 1 && s == 3) r->boot_crc = crc[1];  // 0x0-0x3FFF
+            if (pass == 1 && s == USRTRIM / SECTOR) {
+                file_smk = !memcmp(buf + 0x224, "trimdat\0", 8);
+                if (smk37) {
+                    if (!jl::read(USRTRIM, unit, SECTOR, err, errlen)) return false;
+                    trim_same = !memcmp(buf, unit, SECTOR);
+                    unique |= !blank(unit, SECTOR);
+                }
+            }
+            if (pass == 1 && s == FLASH_SIZE / SECTOR - 1) {
+                if (!jl::read(s * SECTOR, unit, SECTOR, err, errlen)) return false;
+                mac_same = !memcmp(buf + mac_off, unit + mac_off, mac_len);
+                unique |= !blank(unit + mac_off, mac_len);
+            }
         }
     }
     r->crc = crc[1];
@@ -121,22 +140,7 @@ bool check(const jl::Info &info, bool smk37, uint32_t size, const Notes *notes, 
     if (crc[1] != notes->crc)
         return verdict(r, BAD_FILE, "CRC32 %08lX, its .txt says %08lX: damaged", (unsigned long)crc[1],
                        (unsigned long)notes->crc);
-
-    // --- the same kind of unit
-    if (notes->chip_key != info.chip_key || notes->flash_id != info.flash_id)
-        return verdict(r, OTHER_UNIT, "from chip key %04X flash %06lX, not %04X %06lX", notes->chip_key,
-                       (unsigned long)notes->flash_id, info.chip_key, (unsigned long)info.flash_id);
-    bool file_smk = !memcmp(file_trim + 0x224, "trimdat\0", 8);
     if (file_smk && !smk37) return verdict(r, OTHER_UNIT, "an SMK-37's backup (its calibration), not an FM-1's");
-
-    // --- the factory data, as they are on the unit
-    if ((smk37 && !jl::read(USRTRIM, unit_trim, SECTOR, err, errlen)) ||
-        !jl::read(FLASH_SIZE - SECTOR, unit_top, SECTOR, err, errlen))
-        return false;
-    uint32_t mac_off = KEY_MAC % SECTOR, mac_len = SECTOR - mac_off;
-    bool trim_same = !smk37 || !memcmp(file_trim, unit_trim, SECTOR);
-    bool mac_same = !memcmp(file_top + mac_off, unit_top + mac_off, mac_len);
-    bool unique = (smk37 && !blank(unit_trim, SECTOR)) || !blank(unit_top + mac_off, mac_len);
 
     // --- which unit
     if (notes->has_id && info.has_unique_id) {

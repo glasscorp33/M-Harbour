@@ -50,6 +50,7 @@ enum Verdict {
 struct Result {
     Verdict verdict;
     uint32_t crc;      // the file's CRC32
+    uint32_t boot_crc; // ... of its boot area (0x0-0x3FFF)
     char why[96];      // for the screen and the log
 };
 
@@ -57,9 +58,10 @@ struct Result {
 // then compares it with the unit (info, and the flash through jl::read).
 // smk37: the connected unit is an SMK-37 (USRTRIM is compared too).
 // notes: nullptr when the backup has no .txt (refused: nothing to check it by).
-// False with err: the unit could not be read (nothing decided).
+// progress: sectors read of the two passes. False with err: the unit could
+// not be read (nothing decided).
 bool check(const jl::Info &info, bool smk37, uint32_t size, const Notes *notes, const writer::Source &file,
-           Result *r, char *err, size_t errlen);
+           writer::Progress progress, Result *r, char *err, size_t errlen);
 
 inline bool allowed(Verdict v) { return v == SAME_BY_ID || v == SAME_BY_FACTORY; }
 

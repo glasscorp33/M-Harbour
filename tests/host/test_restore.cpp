@@ -113,7 +113,7 @@ static restore::Verdict run_check(File &f, const jl::Info &info, const restore::
     writer::Source src = {file_read, &f, {}};
     restore::Result r;
     char err[96];
-    bool ok = restore::check(info, smk37, (uint32_t)f.data.size(), n, src, &r, err, sizeof err);
+    bool ok = restore::check(info, smk37, (uint32_t)f.data.size(), n, src, no_progress, &r, err, sizeof err);
     CHECK(ok);
     if (getenv("VERBOSE")) printf("    verdict %d: %s\n", r.verdict, r.why);
     if (out) *out = r;
@@ -331,7 +331,7 @@ static void test_same_unit() {
     writer::Source src = {file_read, &f, {}};
     restore::Result r;
     char err[96];
-    CHECK(!restore::check(unit_info(UID_A), true, SIZE, &n, src, &r, err, sizeof err));
+    CHECK(!restore::check(unit_info(UID_A), true, SIZE, &n, src, nullptr, &r, err, sizeof err));
 }
 
 static void test_bad_files() {
@@ -369,6 +369,7 @@ static void test_bad_files() {
     CHECK(run_check(good, info, &partial) == restore::BAD_FILE);
     restore::Result r;
     CHECK(run_check(good, info, &n, true, &r) == restore::SAME_BY_ID && r.crc == n.crc);
+    CHECK(r.boot_crc == jl::crc32_update(0, good.data.data(), 0x4000));
 }
 
 static void test_read_error_while_writing() {
