@@ -42,6 +42,9 @@ jobs:
             exit 1
           fi
 
+      - name: Host tests
+        run: tests/host/run.sh
+
       - name: Build
         run: pio run
 
