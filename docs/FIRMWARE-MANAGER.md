@@ -1,6 +1,9 @@
 # Firmware manager: design
 
-Status: design, nothing built. Branch to come: `firmware-manager` (from `restore-backup`).
+Status: phase 2 (library and switching) built on branch `firmware-manager`
+(from `soft-key`), version `0.3.0-fm.1`, host-tested on the simulated unit
+only: **not yet run on a real unit**. Phase 3 (`.fwsc` packages) and Wi-Fi
+time are not built.
 Units: M-VAVE FM-1 and SMK-37 Pro / Elite (owner has an FM-1 and an SMK-37 Elite).
 
 ## 1. Idea
@@ -163,6 +166,17 @@ Builds on the existing code, no rewrite:
    load with boot area kept, import of existing backups. Host tests on the
    simulated unit; then a real switch test: Elite sequencer → official Open →
    sequencer, checking patterns survive; same on the FM-1.
+   *Status (2026-11-14): built (`src/library.*`, `src/switcher.*`,
+   `src/library_sd.*`, the library screen in `src/advanced.cpp`, the
+   writer's start address); host tests pass; the real switch test is still
+   to do. As built: the date is always empty (no clock; NTP is a TODO in
+   `libsd::today()`); SAVE and LOAD make the snapshot `current`, an
+   auto-save does not; the second DELETE confirmation is for a unit's only
+   snapshot; the boot-table flagging of section 5 is not built (only "the
+   boot areas differ" is shown); the "add to library" label is optional
+   (U), the unit's folder is made at its first SAVE or IMPORT; the battery
+   check reads M5Unified's battery voltage (refused under 20 %, skipped
+   without a believable reading).*
 3. **Package install** from `.fwsc`.
 4. Nice to have: show the firmware identity and version of each snapshot;
    battery checks; export/import a unit's library as one folder; offer the work

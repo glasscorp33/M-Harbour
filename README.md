@@ -28,7 +28,8 @@ at `0xC1224` / `0xFF000`, then the flash ID: FM-1 `856014`/`B36014`, SMK-37
 `EB6014`) and installs that board's image. See [rescue/README.md](rescue/README.md).
 
 A log is kept on the SD card in `/fm1/log.txt`, backups in
-`/fm1/backup-NNN.bin` (with a `.txt` describing the unit).
+`/fm1/backup-NNN.bin` (with a `.txt` describing the unit), and the advanced
+mode's library of named snapshots in `/fm1/units/` (below).
 
 **Status** (2026-11-12): works on an FM-1 and an SMK-37 Pro, tested on real
 bricks: both with the stock bootloader and their firmware's start erased (as
@@ -87,6 +88,8 @@ loader through the ROM and reads, erases and writes the flash
 | `src/jl.cpp`, `src/mflr_loader.h` | ROM and loader protocol; M-Flasher's loader (MIT) |
 | `src/writer.cpp` | the rescue install, and a backup's restore |
 | `src/restore.cpp` | whether a backup is whole and the connected unit's |
+| `src/library.cpp`, `src/switcher.cpp` | the library's names, files and list; the order of a LOAD (host-tested) |
+| `src/library_sd.cpp` | the library's files on the SD card |
 | `src/engine.cpp` | download mode, connection, the unit's model, backup: both modes' work |
 | `src/guided.cpp`, `src/advanced.cpp` | the two modes |
 | `src/ui.cpp`, `src/art.cpp`, `art/` | screen, keys, log; the guided mode's pictures |
@@ -150,9 +153,11 @@ under your control:
 
 - **P** / **T** with nothing plugged in: pin check (`H3 L0`) and pulse test
   (about 3000 edges, well under 500 ppm).
-- **ENTER**, then switch the unit on: when it says **Connected**, ENTER backs
-  up, W installs the rescue, L restores a backup (below), R restarts the
-  unit, ESC ends.
+- **ENTER**, then switch the unit on: when it says **Connected**, the
+  library screen (below) lists the unit's snapshots and old backups: ENTER
+  saves a snapshot, L loads the one selected (an old `backup-NNN`: restores
+  it, below), W installs the rescue, R restarts the unit, ESC ends. A unit
+  that is neither an FM-1 nor an SMK-37 gets ENTER backup, R and ESC only.
 - **H**: key only; on **MOVE CABLE TO PC**, move the cable to the PC, keeping
   the unit on.
 - **Not download mode**: the unit's firmware started instead; the log shows
@@ -184,9 +189,10 @@ settings. After the rescue an SMK-37 Elite that took a firmware from MIDI mode
 reports itself as a Pro; restoring the backup made before the rescue brings
 back the Elite as it was, with only the Cardputer.
 
-1. **Connected**, then **L**: the backups on the card, newest first (1-7 picks
-   one, N shows more). Each says whose it is by the unit ID in its `.txt`:
-   *this unit*, *OTHER unit*, or *no unit ID*.
+1. **Connected**: the old backups are at the bottom of the library screen
+   (`old backup-NNN`), newest first; select one (`;` / `.`) and **L**. Each
+   says whose it is by the unit ID in its `.txt`: *this unit*, *OTHER unit*,
+   *no unit ID* or *no .txt*.
 2. The app checks the backup and refuses it, with nothing written, unless:
    - it is exactly 1 MiB, reads the same twice, and its CRC32 is the one in
      its `.txt` (a backup without its `.txt` is refused);
@@ -227,13 +233,90 @@ SMK-37: the first restore on a real unit is the first test. The SMK-37 Elite
 is the same hardware as the Pro (`rescue/README.md`) but has not been tested
 with this app either.
 
+## Library and switching (advanced mode)
+
+**Status: built and tested only on a PC against a simulated unit
+(`tests/host/test_library.cpp`). Not yet run on a real FM-1 or SMK-37**:
+the first SAVE and LOAD on a real unit are the first test. Version
+`0.3.0-fm.1`. Design: [docs/FIRMWARE-MANAGER.md](docs/FIRMWARE-MANAGER.md)
+(phase 2).
+
+A snapshot is the unit's whole 1 MiB flash with a name: firmware, presets,
+settings, patterns. Each unit has its own folder; switching to another
+snapshot saves the current state first, so nothing is lost.
+
+```
+/fm1/units/<unit id>/unit.txt           model, chip key, flash ID, label
+/fm1/units/<unit id>/current.txt        the snapshot last saved or loaded
+/fm1/units/<unit id>/snapshots/0003 Dub 1.bin / .txt
+```
+
+The unit ID is the flash chip's unique ID (as `unit id` in a backup's `.txt`),
+or without one `k<chip key>-f<CRC32 of the factory data>`. A snapshot's `.txt`
+is a backup's `.txt` (the restore's checks read it) plus `name` (exactly as
+typed), `date` (empty: the Cardputer has no clock), `model`, `firmware` (the
+USB product name the unit gave before the soft key, if it was reached that
+way), `source` (backup, auto-save, import). The file name is a FAT-safe copy
+of the name (`/ \ : * ? " < > |` become `-`, at most 32 characters) after a
+number, so equal names never collide.
+
+On **Connected** (FM-1, SMK-37) the library screen shows this unit's
+snapshots, newest first, `*` the current one, then every old `backup-NNN`
+on the card with whose it is. The line under the list describes the selected
+one.
+
+| Key | |
+|---|---|
+| `;` `.` (or fn+`;` fn+`.`) | up, down; `,` `/` a page up, down |
+| **ENTER** | **SAVE**: the name window (below), then the whole flash read, checked against the chip's CRC32 and read back, as a backup; it becomes the current one |
+| **L** | **LOAD** the selected snapshot (below); on an old backup, the restore as before |
+| **N** | **RENAME** (the files and the `.txt`) |
+| **D** | **DELETE** (Y to confirm; a second Y if it is the unit's only snapshot); old backups are not deleted here |
+| **I** | **IMPORT** the selected old backup: the restore's checks first (whole, intact, this unit's, the model), then a name; the copy is checked against its CRC32 |
+| **U** | the unit's label (shown at the top) |
+| **W** / **V** / **R** / **ESC** | rescue / the log / restart the unit / end |
+
+**The name window** comes with a suggestion: the firmware and the date when
+both are known, else the firmware (`SMK37 Open`), else the model (`SMK-37`).
+Type over it: letters (shift for capitals), digits, space, `- _ / .` and the
+shifted symbols; **BKSP** deletes, **fn+BKSP** clears, **ENTER** keeps it,
+**ESC** (`` ` ``) cancels. There is no clock, so no date is suggested: type
+it into the name if you want one (`Dub 1 14/11/26`). Wi-Fi time is not built
+(a TODO).
+
+**LOAD** (**L** on a snapshot, **ENTER** to go on):
+1. The Cardputer's battery: under 20 % nothing is done (not checked when
+   M5Unified gives no believable reading).
+2. **Auto-save** of the unit as it is, named `auto <current>`. If its CRC32
+   equals a snapshot already there (and that file is checked to be it), no
+   copy is stored; the screen says which one it equals. A failed auto-save
+   stops the load.
+3. The restore's checks on the snapshot (1 MiB, two reads, the CRC32 in its
+   `.txt`, the same unit by unit ID and factory data) and the same model.
+4. What differs **from 0x4000**: the unit's own boot area (`0x0-0x3FFF`) is
+   kept. **W** writes, **ESC** cancels. If the snapshot's boot area differs,
+   **X** offers "restore exactly" with a warning and **Y** to confirm: the
+   boot area is then written too, last.
+5. The battery again, then the writer: only differing sectors, each run
+   verified, the whole range at the end, the kept boot area checked
+   unchanged. `0xFF000-0xFFFFF`, and on the SMK-37 `0xC0000-0xC1FFF`, are
+   never written (pairings and calibration are shared by all snapshots).
+6. `current.txt` updated; **R** restarts the unit into it.
+
+Every step is in `/fm1/log.txt`. A load that stops part-way can be run
+again; the auto-save is the way back. Untested on hardware: whether a
+snapshot taken under one boot area starts on another (stock bootloader vs
+m-bootloader); keep the default (boot area kept) unless you know.
+
 ## Cautions
 
 - Measure the Cardputer's USB-C VBUS while on battery. If it outputs 5 V, use a
   cable/adapter without VBUS: the unit should run from its own battery.
-- Only the repair (**Y** in the guided mode, **W** in the advanced one) and
-  the restore (**L**, then **W**, advanced mode) write the unit's flash, after
-  a backup (or, for the repair, the no-card warning) and a confirmation.
+- Only the repair (**Y** in the guided mode, **W** in the advanced one), the
+  restore (**L** on an old backup, then **W**) and the library's LOAD (**L**
+  on a snapshot, then **W**, or **X** and **Y**) write the unit's flash, after
+  a backup or auto-save (or, for the repair, the no-card warning) and a
+  confirmation.
 - SD card: FAT32. It can go in at any time; the app mounts it when needed.
 
 ## Licence
