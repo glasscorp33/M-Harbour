@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cardputer firmware manager – mockup</title>
+<style>
+  :root { --scale: 3; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #1d1f22; color: #ddd; font-family: system-ui, sans-serif; }
+  header { padding: 14px 20px 4px; }
+  header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  header p { margin: 0; color: #9aa; font-size: 13px; max-width: 900px; line-height: 1.45; }
+  .wrap { display: flex; gap: 28px; padding: 16px 20px 30px; flex-wrap: wrap; align-items: flex-start; }
+  .device { background: #f2efe8; border-radius: 18px; padding: 22px 26px 26px; box-shadow: 0 8px 30px #0008; }
+  .bezel { background: #111; padding: 10px; border-radius: 8px; display: inline-block; }
+  .screenbox { width: calc(240px * var(--scale)); height: calc(135px * var(--scale)); position: relative; overflow: hidden; }
+  #screen {
+    width: 240px; height: 135px; position: absolute; left: 0; top: 0;
+    transform: scale(var(--scale)); transform-origin: 0 0;
+    background: #000; color: #fff; overflow: hidden;
+    font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  }
+  .controls { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: #333; font-size: 13px; }
+  .controls button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #aaa; background: #fff; cursor: pointer; }
+  .controls button.on { background: #333; color: #fff; }
+  .side { max-width: 380px; font-size: 13px; line-height: 1.5; color: #bbb; }
+  .side h2 { font-size: 14px; color: #eee; margin: 0 0 6px; }
+  .side kbd { background: #333; border: 1px solid #555; border-radius: 4px; padding: 0 5px; font-size: 12px; color: #fff; }
+  .side ol { padding-left: 18px; margin: 6px 0 14px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .flow button { font: 12px system-ui; padding: 3px 7px; border-radius: 5px; border: 1px solid #444; background: #2a2d31; color: #ccd; cursor: pointer; }
+  .flow button:hover { background: #3a3e44; }
+
+  /* ---- inside the 240x135 screen ---- */
+  .bar { height: 15px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px; font-size: 10px; font-weight: 700; color: #000; }
+  .bar .bat { font-weight: 400; font-size: 8px; }
+  .body { position: absolute; top: 15px; left: 0; right: 0; bottom: 11px; padding: 3px 4px; }
+  .foot { position: absolute; bottom: 0; left: 0; right: 0; height: 11px; font-size: 7px; line-height: 11px; padding: 0 4px; color: #ffd84a; background: #111; white-space: nowrap; overflow: hidden; }
+  .box { border: 1px solid #555; border-radius: 3px; height: 27px; margin-bottom: 3px; display: flex; align-items: center; padding: 0 6px; gap: 6px; }
+  .box .t { font-size: 13px; font-weight: 700; letter-spacing: .2px; }
+  .box .s { font-size: 7px; color: #aaa; line-height: 8px; }
+  .box.sel { border-color: #fff; background: #fff; color: #000; }
+  .box.sel .s { color: #333; }
+  .box .n { font-size: 9px; color: #888; width: 8px; }
+  .box.sel .n { color: #555; }
+  .big2 .box { height: 40px; }
+  .big2 .box .t { font-size: 14px; }
+  .big2 .box .s { font-size: 8px; line-height: 9px; }
+  .status { font-size: 8px; height: 11px; line-height: 11px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; }
+  .ok { color: #59e36b; } .warn { color: #ffb02e; } .bad { color: #ff5a5a; } .dim { color: #888; } .cy { color: #5fd7ff; }
+  .msg { font-size: 11px; line-height: 14px; }
+  .msg.big { font-size: 13px; line-height: 16px; font-weight: 700; }
+  .row { height: 13px; line-height: 13px; font-size: 9px; padding: 0 3px; white-space: nowrap; overflow: hidden; display: flex; gap: 4px; }
+  .row.sel { background: #fff; color: #000; }
+  .row .ic { width: 9px; flex: none; }
+  .row .r { margin-left: auto; color: #888; font-size: 7px; }
+  .row.sel .r { color: #444; }
+  .path { font-size: 8px; color: #5fd7ff; height: 11px; line-height: 11px; white-space: nowrap; overflow: hidden; }
+  .input { border: 1px solid #fff; height: 20px; font-size: 12px; line-height: 18px; padding: 0 4px; margin: 4px 0; white-space: nowrap; overflow: hidden; }
+  .cursor { display: inline-block; width: 6px; background: #fff; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .prog { height: 10px; border: 1px solid #888; margin: 6px 0 3px; }
+  .prog > div { height: 100%; background: #59e36b; }
+  .yn { display: flex; gap: 6px; margin-top: 6px; }
+  .yn .box { flex: 1; justify-content: center; height: 24px; }
+  .kv { font-size: 9px; line-height: 12px; display: flex; }
+  .kv b { width: 62px; color: #888; font-weight: 400; flex: none; }
+  .log { font-size: 7px; line-height: 9px; color: #ccc; white-space: pre; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Firmware manager — Cardputer ADV screen mockup</h1>
+  <p>The screen is drawn at the Cardputer ADV's real resolution (240 × 135 pixels) and enlarged so it can be read. Use the buttons
+  to see it at 1× (actual pixels). Click inside the page, then use the keyboard as on the Cardputer:
+  <b>↑/↓</b> (or <b>;</b> / <b>.</b>) to move, <b>Enter</b> to choose, <b>Esc</b> (or <b>`</b>) to go back, letters for the shortcuts shown at the bottom of each screen.
+  The data is made up (an SMK-37 Elite with a few saved firmwares).</p>
+</header>
+<div class="wrap">
+  <div>
+    <div class="device">
+      <div class="bezel"><div class="screenbox" id="screenbox"><div id="screen"></div></div></div>
+      <div class="controls">
+        Size:
+        <button data-s="1">1× (real pixels)</button>
+        <button data-s="2">2×</button>
+        <button data-s="3" class="on">3×</button>
+        <button data-s="4">4×</button>
+        &nbsp; <button id="restart">Start over</button>
+      </div>
+    </div>
+  </div>
+  <div class="side">
+    <h2>Jump to a screen</h2>
+    <div class="flow" id="flow"></div>
+    <h2 style="margin-top:16px">The flow</h2>
+    <ol>
+      <li><b>Home</b>: Recovery or Firmware manager.</li>
+      <li><b>Connect</b>: one instruction screen, ENTER.</li>
+      <li><b>Waiting</b>: switch the device on; the Cardputer finds it and asks it over MIDI to open download mode by itself (no "not download mode" screen).</li>
+      <li><b>Main menu</b>: Backup current · Library · Load firmware. The top line says what is on the device and whether it is saved.</li>
+      <li><b>Backup current</b>: pick a folder (or make one; the newest name in it is shown). The name window lists the names already in that folder, so you can follow the same format: <kbd>↑</kbd><kbd>↓</kbd> look through them, <kbd>Tab</kbd> copies one into the field to edit.</li>
+      <li><b>Library</b>: folders, then backups inside. <kbd>N</kbd> rename, <kbd>M</kbd> move to, <kbd>D</kbd> delete, <kbd>F</kbd> new folder.</li>
+      <li><b>Load firmware</b>: if what's on the device is not saved, it asks first (Yes → folder + name, No → straight on). Then pick the firmware, confirm, write.</li>
+      <li><b>I</b> (main menu): info page with battery, SD space and the log. <b>X</b>: exit and restart the device.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+// ---------------- made-up data ----------------
+const lib = {
+  device: "SMK-37 Elite",
+  folders: [
+    { name: "SeqAdv", items: [
+      { name: "SeqAdv 0.1 Blank 14-11-26", date: "14/11/26", crc: "20AABDB6" },
+      { name: "SeqAdv 0.1 Dub 1 15-11-26", date: "15/11/26", crc: "CA16BF6B" },
+      { name: "SeqAdv 0.1 Hiphop 2 15-11-26", date: "15/11/26", crc: "454EFEE3" } ] },
+    { name: "Official Open", items: [ { name: "Stock 1.0", date: "13/11/26", crc: "8E21C0D4" } ] },
+    { name: "Baud Girl", items: [ { name: "BG 2.1 presets", date: "10/11/26", crc: "77A0E912" } ] },
+  ],
+  root: [ { name: "First backup", date: "14/11/26", crc: "11223344" } ],
+  onDevice: { crc: "CA16BF6B" }   // equals SeqAdv / Dub 1
+};
+function findOnDevice() {
+  for (const f of lib.folders) for (const it of f.items) if (it.crc === lib.onDevice.crc) return f.name + " / " + it.name;
+  for (const it of lib.root) if (it.crc === lib.onDevice.crc) return it.name;
+  return null;
+}
+
+// ---------------- state ----------------
+let st;
+function reset() {
+  st = { screen: "home", sel: 0, folder: null, text: "", after: null, pick: null, progress: 0, timers: [] , saveFor: null, moveItem: null, nameSel: -1 };
+}
+reset();
+
+const BAR = {
+  home: "#ffd84a", rec: "#ff8a5a", fm: "#5fd7ff", backup: "#7cf08a", lib: "#c9a7ff", load: "#ffb02e", info: "#bbbbbb"
+};
+function bar(title, color) {
+  return `<div class="bar" style="background:${color}"><span>${title}</span><span class="bat">▮ 72%</span></div>`;
+}
+function foot(t) { return `<div class="foot">${t}</div>`; }
+function boxes(list, sel, cls = "") {
+  return `<div class="${cls}">` + list.map((b, i) =>
+    `<div class="box ${i === sel ? "sel" : ""}"><span class="n">${i + 1}</span><div><div class="t">${b[0]}</div>${b[1] ? `<div class="s">${b[1]}</div>` : ""}</div></div>`
+  ).join("") + `</div>`;
+}
+function rows(list, sel, first) {
+  const vis = 6;
+  first = Math.max(0, Math.min(sel - 2, list.length - vis));
+  return list.slice(first, first + vis).map((r, k) => {
+    const i = first + k;
+    return `<div class="row ${i === sel ? "sel" : ""}"><span class="ic">${r.ic || ""}</span><span>${r.t}</span><span class="r">${r.r || ""}</span></div>`;
+  }).join("");
+}
+
+// ---------------- screens ----------------
+const S = {
+  home: {
+    n: 2,
+    draw: () => bar("SYNTH TOOL  0.4", BAR.home) + `<div class="body">` +
+      boxes([["RECOVERY", "Fix a device that does not start (brick)"],
+             ["FIRMWARE MANAGER", "Back up, keep and switch firmwares"]], st.sel, "big2") +
+      `</div>` + foot("↑↓ move   ENTER choose   1-2 shortcut"),
+    enter: () => go(st.sel === 0 ? "rec" : "fmConnect"),
+  },
+  rec: {
+    n: 2,
+    draw: () => bar("RECOVERY", BAR.rec) + `<div class="body">` +
+      boxes([["GUIDED", "Step by step, for a dead device"],
+             ["ADVANCED", "Backup, restore, repair, tests"]], st.sel, "big2") +
+      `</div>` + foot("↑↓ move   ENTER choose   ESC back"),
+    enter: () => go(st.sel === 0 ? "recGuided" : "recAdv"),
+    back: () => go("home", 0),
+  },
+  recGuided: {
+    draw: () => bar("RECOVERY · GUIDED", BAR.rec) + `<div class="body"><div class="msg">Today's guided rescue,<br>unchanged.</div><div class="msg dim" style="margin-top:8px;font-size:9px">(Device OFF, power-on key, backup, repair with m-bootloader…)</div></div>` + foot("ESC back"),
+    back: () => go("rec", 0),
+  },
+  recAdv: {
+    draw: () => bar("RECOVERY · ADVANCED", BAR.rec) + `<div class="body"><div class="msg">Today's advanced mode,<br>unchanged.</div><div class="msg dim" style="margin-top:8px;font-size:9px">(ENTER backup · W rescue · L restore · P/T pin tests)</div></div>` + foot("ESC back"),
+    back: () => go("rec", 1),
+  },
+
+  fmConnect: {
+    draw: () => bar("FIRMWARE MANAGER · CONNECT", BAR.fm) + `<div class="body">
+      <div class="msg big">Connect the device</div>
+      <div class="msg" style="font-size:10px;line-height:13px;margin-top:3px">
+      SMK-37 or FM-1 to the Cardputer<br>with a USB-C cable.<br>
+      <span class="dim">On or off: both work. Cardputer on battery.</span></div>
+      </div>` + foot("ENTER continue   ESC back"),
+    enter: () => { go("fmWait"); startWait(); },
+    back: () => go("home", 1),
+  },
+  fmWait: {
+    draw: () => {
+      const p = st.progress;
+      const lines = [
+        ["Switch the device ON now.", p >= 0 ? "msg big" : ""],
+        ["Found: SMK37 Open (MIDI)", p >= 1 ? "ok" : "dim"],
+        ["Asking it for download mode…", p >= 2 ? "ok" : "dim"],
+        ["Connected · SMK-37 Elite", p >= 3 ? "ok" : "dim"],
+      ];
+      return bar("FIRMWARE MANAGER · CONNECTING", BAR.fm) + `<div class="body">` +
+        `<div class="msg big">${p < 1 ? "Switch the device ON" : p < 3 ? "Connecting…" : "Connected"}</div>` +
+        lines.slice(1).map(l => `<div class="status ${l[1]}" style="font-size:9px;height:13px;line-height:13px">${p >= lines.indexOf(l) ? "✓ " : "· "}${l[0]}</div>`).join("") +
+        `<div class="status dim" style="margin-top:3px">Not answering over MIDI? Use Recovery.</div>` +
+        `</div>` + foot("ESC cancel");
+    },
+    back: () => { stopTimers(); go("fmConnect"); },
+  },
+  fmMain: {
+    n: 3,
+    draw: () => {
+      const on = findOnDevice();
+      return bar("FIRMWARE MANAGER · " + lib.device.toUpperCase(), BAR.fm) + `<div class="body">` +
+        `<div class="status">On device: ${on ? `<span class="ok">${on} ✓ saved</span>` : `<span class="warn">not saved in the library</span>`}</div>` +
+        boxes([["BACKUP CURRENT", ""], ["LIBRARY", ""], ["LOAD FIRMWARE", ""]], st.sel) +
+        `</div>` + foot("↑↓ ENTER   I info   X exit & restart device");
+    },
+    enter: () => {
+      if (st.sel === 0) { st.saveFor = "backup"; go("pickFolder"); }
+      else if (st.sel === 1) go("libFolders");
+      else go(findOnDevice() ? "loadFolders" : "loadAsk");
+    },
+    key: k => { if (k === "i") go("info"); if (k === "x") go("exit"); },
+    back: () => go("exitAsk"),
+  },
+
+  // ---- folder picker shared by Backup current and Load's "save first" ----
+  pickFolder: {
+    list: () => [{ ic: "+", t: "New folder…" }, { ic: "/", t: "(no folder)", r: lib.root.length + (lib.root.length === 1 ? " backup" : " backups") }]
+      .concat(lib.folders.map(f => ({ ic: "▸", t: f.name, r: f.items.length + (f.items.length === 1 ? " backup" : " backups") }))),
+    draw: () => bar(st.saveFor === "load" ? "LOAD · SAVE FIRST · WHERE?" : "BACKUP CURRENT · WHERE?", BAR.backup) + `<div class="body">` +
+      `<div class="path">${pickPreview()}</div>` + rows(S.pickFolder.list(), st.sel) + `</div>` +
+      foot("↑↓ move   ENTER choose   ESC back"),
+    enter: () => {
+      if (st.sel === 0) { st.text = ""; st.after = "newFolderThenName"; go("name"); return; }
+      st.folder = st.sel === 1 ? null : lib.folders[st.sel - 2].name;
+      st.text = lib.device === "SMK-37 Elite" ? "SMK37 Open " : ""; st.after = "save"; go("name");
+    },
+    back: () => st.saveFor === "load" ? go("loadAsk") : go("fmMain", 0),
+  },
+  name: {
+    draw: () => {
+      const title = st.after === "newFolderThenName" || st.after === "newFolderLib" ? "NEW FOLDER · NAME" :
+                    st.after === "rename" ? "LIBRARY · RENAME" : (st.saveFor === "load" ? "LOAD · SAVE FIRST · NAME" : "BACKUP CURRENT · NAME");
+      const showList = st.after === "save" || st.after === "rename";
+      const its = showList ? folderItems() : [];
+      const where = st.after === "save" ? `In: ${st.folder || "(no folder)"}` :
+                    st.after === "rename" ? `Was: ${esc(st.pick?.name || "")}` : "A folder, e.g. the firmware's name";
+      let list = "";
+      if (showList) {
+        if (!its.length) list = `<div class="status dim">Nothing in this folder yet.</div>`;
+        else {
+          const vis = 4, n = its.length;
+          const first = st.nameSel < 0 ? Math.max(0, n - vis) : Math.max(0, Math.min(st.nameSel - 1, n - vis));
+          list = `<div class="status dim" style="height:10px;line-height:10px">Already here (newest last):</div>` +
+            its.slice(first, first + vis).map((it, k) => {
+              const i = first + k;
+              return `<div class="row ${i === st.nameSel ? "sel" : ""}" style="height:10px;line-height:10px;font-size:8px"><span>${esc(it.name)}</span><span class="r">${it.date}</span></div>`;
+            }).join("");
+        }
+      } else list = `<div class="status dim">Type the name.</div>`;
+      return bar(title, st.after === "rename" || st.after === "newFolderLib" ? BAR.lib : BAR.backup) + `<div class="body">` +
+        `<div class="path">${where}</div>` +
+        `<div class="input" style="margin:2px 0 3px">${esc(st.text)}<span class="cursor">&nbsp;</span></div>` +
+        list + `</div>` +
+        foot(showList && its.length ? "type   ↑↓ see names   TAB copy one   ENTER save   ESC" : "type   BKSP delete   ENTER save   ESC cancel");
+    },
+    type: true,
+    enter: () => {
+      const t = st.text.trim(); if (!t) return;
+      if (st.after === "newFolderThenName") { lib.folders.push({ name: t, items: [] }); st.folder = t; st.text = "SMK37 Open "; st.after = "save"; render(); return; }
+      if (st.after === "newFolderLib") { lib.folders.push({ name: t, items: [] }); go("libFolders", lib.folders.length - 1 + 1); return; }
+      if (st.after === "rename") { st.pick.name = t; go("libItems", st.sel2 || 0); return; }
+      if (st.after === "save") { go("saving"); runProgress(() => {
+        const item = { name: t, date: "15/11/26", crc: lib.onDevice.crc };
+        (st.folder ? lib.folders.find(f => f.name === st.folder).items : lib.root).push(item);
+        if (st.saveFor === "load") go("loadFolders"); else go("saved");
+      }); }
+    },
+    back: () => {
+      if (st.after === "rename") go("libItems"); else if (st.after === "newFolderLib") go("libFolders"); else go("pickFolder");
+    },
+  },
+  saving: {
+    draw: () => bar(st.saveFor === "load" ? "LOAD · SAVING FIRST" : "BACKUP CURRENT · SAVING", BAR.backup) + `<div class="body">` +
+      `<div class="msg big">Reading the device…</div><div class="prog"><div style="width:${st.progress}%"></div></div>` +
+      `<div class="status dim">1 MiB, about 4 s. Keep it connected.</div></div>` + foot(""),
+  },
+  saved: {
+    draw: () => bar("BACKUP CURRENT · DONE", BAR.backup) + `<div class="body">` +
+      `<div class="msg big ok">✓ Saved</div><div class="msg" style="font-size:10px">${esc((st.folder ? st.folder + " / " : "") + st.text.trim())}</div>` +
+      `<div class="status dim" style="margin-top:4px">Checked against the device (CRC32).</div></div>` + foot("ENTER back to the menu"),
+    enter: () => go("fmMain", 0), back: () => go("fmMain", 0),
+  },
+
+  // ---- library ----
+  libFolders: {
+    list: () => [{ ic: "/", t: "(no folder)", r: lib.root.length + "" }].concat(lib.folders.map(f => ({ ic: "▸", t: f.name, r: f.items.length + "" }))),
+    draw: () => bar("LIBRARY · " + lib.device.toUpperCase(), BAR.lib) + `<div class="body">` +
+      `<div class="path">Folders</div>` + rows(S.libFolders.list(), st.sel) + `</div>` +
+      foot("ENTER open   F new folder   N rename   D delete   ESC back"),
+    enter: () => { st.folder = st.sel === 0 ? null : lib.folders[st.sel - 1].name; go("libItems", 0); },
+    key: k => { if (k === "f") { st.text = ""; st.after = "newFolderLib"; go("name"); } },
+    back: () => go("fmMain", 1),
+  },
+  libItems: {
+    items: () => st.folder ? lib.folders.find(f => f.name === st.folder).items : lib.root,
+    draw: () => {
+      const its = S.libItems.items();
+      const list = its.length ? its.map(it => ({ ic: it.crc === lib.onDevice.crc ? "●" : "", t: it.name, r: it.date })) : [{ t: "(empty)", r: "" }];
+      return bar("LIBRARY · " + (st.folder || "(no folder)").toUpperCase(), BAR.lib) + `<div class="body">` +
+        `<div class="path">${its.length} backups${its.some(i => i.crc === lib.onDevice.crc) ? "  · ● = on the device now" : ""}</div>` +
+        rows(list, st.sel) + `</div>` + foot("N rename   M move to   D delete   ESC folders");
+    },
+    key: k => {
+      const its = S.libItems.items(); if (!its.length) return;
+      st.pick = its[st.sel]; st.sel2 = st.sel;
+      if (k === "n") { st.text = st.pick.name; st.after = "rename"; go("name"); }
+      if (k === "m") { st.moveItem = st.pick; go("moveTo", 0); }
+      if (k === "d") go("delAsk", 1);
+    },
+    back: () => go("libFolders", st.folder ? lib.folders.findIndex(f => f.name === st.folder) + 1 : 0),
+  },
+  moveTo: {
+    list: () => [{ ic: "/", t: "(no folder)" }].concat(lib.folders.map(f => ({ ic: "▸", t: f.name }))),
+    draw: () => bar("LIBRARY · MOVE TO", BAR.lib) + `<div class="body">` +
+      `<div class="path">Move “${esc(st.moveItem.name)}” to:</div>` + rows(S.moveTo.list(), st.sel) + `</div>` +
+      foot("↑↓ move   ENTER move here   ESC cancel"),
+    enter: () => {
+      const from = S.libItems.items(); from.splice(from.indexOf(st.moveItem), 1);
+      const to = st.sel === 0 ? lib.root : lib.folders[st.sel - 1].items; to.push(st.moveItem);
+      st.folder = st.sel === 0 ? null : lib.folders[st.sel - 1].name; go("libItems", to.length - 1);
+    },
+    back: () => go("libItems", st.sel2 || 0),
+  },
+  delAsk: {
+    n: 2,
+    draw: () => bar("LIBRARY · DELETE", BAR.lib) + `<div class="body">` +
+      `<div class="msg">Delete <b>${esc(st.pick.name)}</b>?</div><div class="status dim">The file is removed from the SD card.</div>` +
+      `<div class="yn">${["DELETE", "KEEP"].map((t, i) => `<div class="box ${i === st.sel ? "sel" : ""}"><div class="t" style="font-size:11px">${t}</div></div>`).join("")}</div>` +
+      `</div>` + foot("←→ choose   ENTER   ESC keep"),
+    enter: () => { if (st.sel === 0) { const its = S.libItems.items(); its.splice(its.indexOf(st.pick), 1); } go("libItems", 0); },
+    back: () => go("libItems", st.sel2 || 0),
+    horizontal: true,
+  },
+
+  // ---- load ----
+  loadAsk: {
+    n: 2,
+    draw: () => bar("LOAD FIRMWARE · SAVE FIRST?", BAR.load) + `<div class="body">` +
+      `<div class="msg" style="font-size:10px">What is on the device now is<br><b class="warn">not saved</b> in the library.</div>` +
+      `<div class="status">Save it before loading another?</div>` +
+      `<div class="yn">${["YES, SAVE IT", "NO"].map((t, i) => `<div class="box ${i === st.sel ? "sel" : ""}"><div class="t" style="font-size:11px">${t}</div></div>`).join("")}</div>` +
+      `<div class="status dim" style="margin-top:3px">No: unsaved patterns on the device are lost.</div>` +
+      `</div>` + foot("←→ choose   ENTER   ESC back"),
+    enter: () => { if (st.sel === 0) { st.saveFor = "load"; go("pickFolder", 2); } else go("loadFolders"); },
+    back: () => go("fmMain", 2),
+    horizontal: true,
+  },
+  loadFolders: {
+    list: () => lib.folders.map(f => ({ ic: "▸", t: f.name, r: f.items.length + "" })).concat([{ ic: "/", t: "(no folder)", r: lib.root.length + "" }]),
+    draw: () => {
+      const on = findOnDevice();
+      return bar("LOAD FIRMWARE · CHOOSE", BAR.load) + `<div class="body">` +
+        `<div class="path">${on ? "On device: " + esc(on) + " ✓" : "Pick a folder"}</div>` + rows(S.loadFolders.list(), st.sel) + `</div>` +
+        foot("ENTER open   ESC back");
+    },
+    enter: () => { st.folder = st.sel < lib.folders.length ? lib.folders[st.sel].name : null; go("loadItems", 0); },
+    back: () => go("fmMain", 2),
+  },
+  loadItems: {
+    draw: () => {
+      const its = S.libItems.items();
+      const list = its.length ? its.map(it => ({ ic: it.crc === lib.onDevice.crc ? "●" : "", t: it.name, r: it.date })) : [{ t: "(empty)" }];
+      return bar("LOAD · " + (st.folder || "(no folder)").toUpperCase(), BAR.load) + `<div class="body">` +
+        `<div class="path">Which one goes on the device?</div>` + rows(list, st.sel) + `</div>` + foot("↑↓ move   ENTER choose   ESC folders");
+    },
+    enter: () => {
+      const its = S.libItems.items(); if (!its.length) return;
+      st.pick = its[st.sel];
+      go(st.pick.crc === lib.onDevice.crc ? "loadSame" : "loadConfirm", 0);
+    },
+    back: () => go("loadFolders"),
+  },
+  loadSame: {
+    draw: () => bar("LOAD FIRMWARE", BAR.load) + `<div class="body"><div class="msg big ok">Already on the device</div>` +
+      `<div class="msg" style="font-size:10px">${esc(st.pick.name)} is what it holds now.<br>Nothing to write.</div></div>` + foot("ENTER / ESC back"),
+    enter: () => go("loadItems"), back: () => go("loadItems"),
+  },
+  loadConfirm: {
+    n: 2,
+    draw: () => bar("LOAD FIRMWARE · CONFIRM", BAR.load) + `<div class="body">` +
+      `<div class="msg" style="font-size:10px">Load <b>${esc((st.folder ? st.folder + " / " : "") + st.pick.name)}</b></div>` +
+      `<div class="kv"><b>Checks</b><span class="ok">this device's ✓ intact ✓</span></div>` +
+      `<div class="kv"><b>Changes</b><span>186 sectors · ~20 s</span></div>` +
+      `<div class="kv"><b>Kept</b><span>startup, calibration</span></div>` +
+      `<div class="yn">${["LOAD", "CANCEL"].map((t, i) => `<div class="box ${i === st.sel ? "sel" : ""}"><div class="t" style="font-size:11px">${t}</div></div>`).join("")}</div>` +
+      `</div>` + foot("←→ choose   ENTER   ESC cancel"),
+    enter: () => { if (st.sel === 0) { go("writing"); runProgress(() => { lib.onDevice.crc = st.pick.crc; go("loaded"); }, 70); } else go("loadItems"); },
+    back: () => go("loadItems"),
+    horizontal: true,
+  },
+  writing: {
+    draw: () => bar("LOAD FIRMWARE · WRITING", BAR.load) + `<div class="body">` +
+      `<div class="msg big">Writing ${esc(st.pick.name)}</div><div class="prog"><div style="width:${st.progress}%"></div></div>` +
+      `<div class="status warn">Do not switch anything off.</div><div class="status dim">Each piece is checked after writing.</div></div>` + foot(""),
+  },
+  loaded: {
+    n: 2,
+    draw: () => bar("LOAD FIRMWARE · DONE", BAR.load) + `<div class="body">` +
+      `<div class="msg big ok">✓ Loaded and verified</div><div class="msg" style="font-size:10px">${esc(st.pick.name)}</div>` +
+      boxes([["RESTART DEVICE", "Start it with this firmware"], ["BACK TO MENU", ""]], st.sel) + `</div>` + foot("↑↓ ENTER"),
+    enter: () => st.sel === 0 ? go("exit") : go("fmMain", 0),
+    back: () => go("fmMain", 0),
+  },
+
+  // ---- info / exit ----
+  info: {
+    draw: () => bar("INFO", BAR.info) + `<div class="body">` +
+      `<div class="kv"><b>Device</b><span>SMK-37 Elite</span></div>` +
+      `<div class="kv"><b>Firmware</b><span>SMK37 Open</span></div>` +
+      `<div class="kv"><b>On device</b><span>${esc(findOnDevice() || "not saved")}</span></div>` +
+      `<div class="kv"><b>Unit ID</b><span>4150353336323715</span></div>` +
+      `<div class="kv"><b>Battery</b><span>72 %</span></div>` +
+      `<div class="kv"><b>SD card</b><span>7.2 GB free · 9 backups</span></div>` +
+      `</div>` + foot("L view log   ESC back"),
+    key: k => { if (k === "l") go("log"); },
+    back: () => go("fmMain", 0),
+  },
+  log: {
+    draw: () => bar("INFO · LOG", BAR.info) + `<div class="body"><div class="log">` +
+`  20281 Reconnected: 4C4A:8057 download mode
+  20969 Loader M-Flasher 1.3, 96 MHz
+  21023 Chip key 980F, flash ID 856014
+  21076 Unit ID 4150353336323715
+  52705 Load SeqAdv / Hip hop 2
+  56499 186 sectors from 0x4000
+  69949 Verified, boot area kept
+  70054 Done in 17 s.` + `</div></div>` + foot("↑↓ scroll   ESC back"),
+    back: () => go("info"),
+  },
+  exitAsk: {
+    n: 2,
+    draw: () => bar("FIRMWARE MANAGER · EXIT", BAR.fm) + `<div class="body">` +
+      boxes([["RESTART DEVICE", "It starts its firmware; you can play"], ["STAY", ""]], st.sel) + `</div>` + foot("↑↓ ENTER   ESC stay"),
+    enter: () => st.sel === 0 ? go("exit") : go("fmMain", 0),
+    back: () => go("fmMain", 0),
+  },
+  exit: {
+    draw: () => bar("FIRMWARE MANAGER", BAR.fm) + `<div class="body"><div class="msg big ok">Device restarted</div>` +
+      `<div class="msg" style="font-size:10px">You can unplug it.</div></div>` + foot("ENTER home"),
+    enter: () => { reset(); render(); }, back: () => { reset(); render(); },
+  },
+};
+
+function pickPreview() {
+  if (st.sel === 0) return "Choose a folder for the backup";
+  const its = st.sel === 1 ? lib.root : lib.folders[st.sel - 2].items;
+  return its.length ? "Newest here: " + esc(its[its.length - 1].name) : "Empty folder";
+}
+function folderItems() { return st.folder ? lib.folders.find(f => f.name === st.folder).items : lib.root; }
+
+// ---------------- engine ----------------
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function go(screen, sel = 0) { st.screen = screen; st.sel = sel; st.nameSel = -1; render(); }
+function count() {
+  const s = S[st.screen];
+  if (s.n) return s.n;
+  if (s.list) return s.list().length;
+  if (st.screen === "libItems" || st.screen === "loadItems") return Math.max(1, S.libItems.items().length);
+  return 0;
+}
+function render() { document.getElementById("screen").innerHTML = S[st.screen].draw(); }
+function stopTimers() { st.timers.forEach(clearTimeout); st.timers = []; }
+function startWait() {
+  st.progress = 0; render();
+  [1, 2, 3].forEach((p, i) => st.timers.push(setTimeout(() => { st.progress = p; render(); }, 1300 + i * 900)));
+  st.timers.push(setTimeout(() => go("fmMain", 0), 1300 + 3 * 900 + 700));
+}
+function runProgress(done, speed = 45) {
+  st.progress = 0; render();
+  const tick = () => { st.progress += 4; render(); if (st.progress >= 100) setTimeout(done, 300); else st.timers.push(setTimeout(tick, speed)); };
+  st.timers.push(setTimeout(tick, speed));
+}
+function key(k) {
+  const s = S[st.screen];
+  if (s.type) {
+    const its = (st.after === "save" || st.after === "rename") ? folderItems() : [];
+    if (k === "ArrowUp" && its.length) { st.nameSel = st.nameSel < 0 ? its.length - 1 : Math.max(0, st.nameSel - 1); return render(); }
+    if (k === "ArrowDown" && its.length) { st.nameSel = st.nameSel < 0 ? its.length - 1 : Math.min(its.length - 1, st.nameSel + 1); return render(); }
+    if (k === "Tab" && its.length) { st.text = its[st.nameSel < 0 ? its.length - 1 : st.nameSel].name; return render(); }
+    if (k === "Enter") return s.enter();
+    if (k === "Escape" || k === "`") return s.back();
+    if (k === "Backspace") { st.text = st.text.slice(0, -1); return render(); }
+    if (k.length === 1 && st.text.length < 30) { st.text += k; return render(); }
+    return;
+  }
+  const n = count();
+  const prev = s.horizontal ? ["ArrowLeft", ",", "ArrowUp", ";"] : ["ArrowUp", ";"];
+  const next = s.horizontal ? ["ArrowRight", "/", "ArrowDown", "."] : ["ArrowDown", "."];
+  if (prev.includes(k) && n) { st.sel = (st.sel - 1 + n) % n; return render(); }
+  if (next.includes(k) && n) { st.sel = (st.sel + 1) % n; return render(); }
+  if (k === "Enter" && s.enter) return s.enter();
+  if ((k === "Escape" || k === "`") && s.back) return s.back();
+  if (/^[1-9]$/.test(k) && s.n && +k <= s.n) { st.sel = +k - 1; return s.enter && s.enter(); }
+  if (s.key && k.length === 1) s.key(k.toLowerCase());
+}
+document.addEventListener("keydown", e => {
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", " ", "Tab"].includes(e.key)) e.preventDefault();
+  key(e.key);
+});
+// click on a box/row: select it and choose
+document.getElementById("screen").addEventListener("click", e => {
+  const el = e.target.closest(".box, .row"); if (!el) return;
+  const all = [...el.parentElement.children].filter(c => c.classList.contains(el.classList.contains("box") ? "box" : "row"));
+  const s = S[st.screen];
+  if (el.classList.contains("row")) {
+    // rows may be scrolled: compute from the first visible index
+    const n = count(), vis = 6, first = Math.max(0, Math.min(st.sel - 2, n - vis));
+    st.sel = first + all.indexOf(el);
+  } else st.sel = all.indexOf(el);
+  render();
+  if (s.enter && !s.type) s.enter();
+});
+document.querySelectorAll(".controls button[data-s]").forEach(b => b.onclick = () => {
+  document.documentElement.style.setProperty("--scale", b.dataset.s);
+  document.querySelectorAll(".controls button[data-s]").forEach(x => x.classList.toggle("on", x === b));
+});
+document.getElementById("restart").onclick = () => { stopTimers(); reset(); render(); };
+
+// jump list
+const jumps = [
+  ["Home", () => go("home")], ["Recovery", () => go("rec")], ["Connect", () => go("fmConnect")],
+  ["Connecting", () => { go("fmWait"); startWait(); }], ["Main menu", () => go("fmMain")],
+  ["Backup: where", () => { st.saveFor = "backup"; go("pickFolder", 2); }],
+  ["Backup: name", () => { st.saveFor = "backup"; st.folder = "SeqAdv"; st.text = "SMK37 Open "; st.after = "save"; go("name"); }],
+  ["Library", () => go("libFolders", 1)], ["Folder", () => { st.folder = "SeqAdv"; go("libItems", 1); }],
+  ["Move to", () => { st.folder = "SeqAdv"; st.moveItem = lib.folders[0].items[0]; st.pick = st.moveItem; go("moveTo", 2); }],
+  ["Load: save first?", () => go("loadAsk")], ["Load: choose", () => go("loadFolders")],
+  ["Load: confirm", () => { st.folder = "Official Open"; st.pick = lib.folders[1].items[0]; go("loadConfirm"); }],
+  ["Info", () => go("info")], ["Log", () => go("log")],
+];
+const flow = document.getElementById("flow");
+jumps.forEach(([t, f]) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => { stopTimers(); f(); }; flow.appendChild(b); });
+
+render();
+</script>
+</body>
+</html>

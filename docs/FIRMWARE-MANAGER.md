@@ -1,9 +1,10 @@
-# Firmware manager: design
-
 Status: phase 2 (library and switching) built on branch `firmware-manager`
-(from `soft-key`), version `0.3.0-fm.1`, host-tested on the simulated unit
-only: **not yet run on a real unit**. Phase 3 (`.fwsc` packages) and Wi-Fi
-time are not built.
+and proven on an SMK-37 Elite with `0.3.0-fm.x` (results at the end). Version
+`0.4.0-fm.1` gives it its own screens (section 11): a home menu with
+Recovery and Firmware manager, connection without the power-on key, folders,
+and "save first?" in place of the auto-save; **this UI version is
+host-tested only, not yet run on a unit**. Phase 3 (`.fwsc` packages) and
+Wi-Fi time are not built.
 Units: M-VAVE FM-1 and SMK-37 Pro / Elite (owner has an FM-1 and an SMK-37 Elite).
 
 ## 1. Idea
@@ -41,8 +42,11 @@ its `.fwsc` install rules; FM-1 Swap's new-flash-chip warning (section 7).
 - **Snapshot**: a whole-flash image of that unit (1 MiB) plus a small text file:
   name, date, model, firmware identity string (read from the image), source
   (backup / auto-save / installed package), CRC32, flash unique ID.
-- **Current**: the snapshot the unit was last switched to, remembered so the
-  auto-save can be named after it ("SeqAdv sequencer").
+- **Current**: the snapshot the unit was last saved as or switched to
+  (`current.txt`). What the unit holds is decided by its chip CRC32, not by
+  `current` (section 11).
+- **Folder**: one level of folders of the user's per unit (e.g. one per
+  firmware); the snapshots directory itself is "(no folder)".
 
 ## 4. SD card layout
 
@@ -51,11 +55,12 @@ its `.fwsc` install rules; FM-1 Swap's new-flash-chip warning (section 7).
   units/
     <unit-id>/                 e.g. flash unique ID, or chip key + calibration hash
       unit.txt                 model, chip key, flash ID, first seen, label ("My Elite")
-      current.txt              name of the snapshot last loaded
-      snapshots/
+      current.txt              number (and name) of the snapshot last saved or loaded
+      snapshots/               "(no folder)"
         0001 Blank start.bin / .txt
-        0002 Dub 1.bin / .txt
-        0003 auto Dub 1.bin / .txt
+        SeqAdv/                a folder (FAT-safe name typed by the user)
+          0002 Dub 1.bin / .txt
+          0003 Hip hop 2.bin / .txt
   packages/                    .fwsc files to install (section 6)
   backup-NNN.bin / .txt        existing rescue backups, still listed and importable
   log.txt
@@ -79,8 +84,10 @@ user can keep or type over. Names are free text, used like project names:
 - The name is kept exactly as typed in the snapshot's `.txt` and shown in the
   list. The file name is a FAT-safe copy (`/ \ : * ? " < > |` become `-`), with
   the snapshot number in front so equal names never collide.
-- Auto-saves before a LOAD are named `auto <name of current>` plus the date if
-  known; they can be renamed later.
+- Numbers are unique across all of a unit's folders; moving a snapshot to
+  another folder renames its two files into it and keeps its number.
+- (Until 0.3.0: auto-saves before a LOAD, named `auto before <target>`. Gone
+  in 0.4.0: section 11.)
 
 ## 5. Switching (the main flow)
 
@@ -89,9 +96,9 @@ user can keep or type over. Names are free text, used like project names:
 2. The library screen lists that unit's snapshots, newest first, with the
    current one marked.
 3. Pick one and **LOAD**. The Cardputer shows what will happen, then on confirm:
-   1. **Auto-save**: reads the whole flash and stores it as a snapshot named
-      after `current` with the date. If the flash equals an existing snapshot,
-      no duplicate is kept.
+   1. **Save first?** (0.4.0; until 0.3.0 an automatic auto-save): if the
+      unit's chip CRC32 is in no snapshot (any folder, its file checked),
+      the user is asked to save it first (folder and name) or not.
    2. **Checks** on the chosen snapshot: as the restore today (size, two reads,
       CRC, same unit, factory data), plus model match.
    3. **Write** with the restore writer: only differing sectors, never the
@@ -132,8 +139,10 @@ This is phase 3: switching between snapshots needs no package parser.
   `0xC0000-0xC1FFF`. Bluetooth pairings and calibration are therefore shared by
   all snapshots of a unit, not swapped.
 - A snapshot is only ever written to the unit it was taken from.
-- Auto-save before every write. A switch can always be undone by loading the
-  auto-save.
+- Before every LOAD, what the unit holds is either already in the library
+  (by its CRC32) or the user is asked to save it first; saying no is an
+  explicit choice ("unsaved patterns on the device are lost"). A switch
+  can be undone by loading what was saved.
 - Every write verified; a stop part-way leaves the boot area untouched, and the
   same load can be run again.
 - **Newer FM-1 flash chip** (`0xB36014`, units sold since autumn 2026): some
@@ -155,8 +164,10 @@ Builds on the existing code, no rewrite:
   naming, de-duplication by CRC, `current`.
 - New `fwsc` (phase 3): package parsing and checks, host-testable against real
   packages.
-- UI: a library screen in place of the Advanced mode's single-action keys;
-  Guided and Advanced modes stay for rescue.
+- UI (0.4.0): a home menu (`src/home.cpp`) with Recovery (the guided and
+  advanced modes, unchanged; the advanced mode keeps its one-screen
+  library) and the firmware manager (`src/fwman.cpp`, drawn by
+  `src/fm_ui.cpp` after `docs/mockup/firmware-manager-ui.html`).
 
 ## 9. Phases
 
@@ -177,6 +188,12 @@ Builds on the existing code, no rewrite:
    (U), the unit's folder is made at its first SAVE or IMPORT; the battery
    check reads M5Unified's battery voltage (refused under 20 %, skipped
    without a believable reading).*
+   *0.4.0-fm.1 (2026-11-15): the firmware manager's own screens off the
+   home menu, connection over USB MIDI without the power-on key, folders,
+   and "save first?" instead of the auto-save (section 11). In the firmware
+   manager a single DELETE confirmation (with a warning for the unit's only
+   snapshot, or the one it holds with no other copy); the advanced mode
+   keeps its second confirmation. Host-tested; not yet run on a unit.*
 3. **Package install** from `.fwsc`.
 4. Nice to have: show the firmware identity and version of each snapshot;
    battery checks; export/import a unit's library as one folder; offer the work
@@ -209,3 +226,58 @@ Builds on the existing code, no rewrite:
 - 0.3.0-fm.2: auto-saves are named "auto before <snapshot being loaded>"
   (what the unit held is unknown); the restart's expected USB error is no
   longer logged.
+
+## 11. The firmware manager's screens (0.4.0-fm.1)
+
+Built after the approved mockup (`docs/mockup/firmware-manager-ui.html`,
+240 x 135; DejaVu Sans at 10, 11 and 13 px and M5GFX's 6 x 8 font; ticks,
+dots and arrows drawn). Host-tested only (the library and switcher tests;
+the screens were checked on a PC against a simulated unit, not on the
+device yet).
+
+- **Home**: RECOVERY (GUIDED, ADVANCED: unchanged) or FIRMWARE MANAGER.
+- **Connect without the power-on key** (`engine::connect_any`): the USB
+  host waits up to 2 min for any device. USB MIDI (a MIDIStreaming bulk
+  OUT): the soft key is sent by itself (choosing the firmware manager asks
+  for it), then up to 30 s for 4C4A:8057, the loader, the unit. Already in
+  download mode: straight on. Otherwise: "Not answering over MIDI. Use
+  Recovery." Only an FM-1 or SMK-37 goes on.
+- **What the unit holds** is its chip CRC32 (`jl::crc32` over 1 MiB, about
+  a second) compared with every snapshot's `.txt` CRC32, in all folders
+  (`library::saved_as`). The main menu says `<folder> / <name> ✓ saved` or
+  `not saved in the library`; lists mark the equal snapshot with `●`.
+- **No auto-save.** LOAD asks **SAVE FIRST?** only when the unit's CRC32 is
+  in no snapshot, or the snapshot that has it does not read back as that
+  CRC32 (`libsd::saved_as` reads the file). YES: folder and name, saved,
+  then on; NO: on, logged. The switcher (`src/switcher.cpp`) has no
+  auto-save step any more; everything else is as before: battery, model,
+  the restore's checks, boot area kept from 0x4000, the exact mode only
+  when the boot areas differ and confirmed twice, protected ranges never
+  written, the battery again before writing.
+- **Folders** (`library::folder_name`, `folders`, `in_folder`;
+  `libsd::make_folder`, `rename_folder`, `remove_folder` (only empty),
+  `move`): one level under `snapshots/`; "(no folder)" is `snapshots/`
+  itself, where every earlier snapshot stays. Directories that are not
+  names this app could have made (`.Trashes`, ...) are not listed.
+- **BACKUP CURRENT**: a folder (the newest name in it shown), the name
+  window (the names already in that folder, newest last; fn+; / fn+.
+  highlight one, TAB copies it), the read; "Saved", with a note when the
+  same CRC32 is saved under another name.
+- **LIBRARY**: folders (F, N, D), a folder's snapshots oldest first (N, M,
+  D), "Old backups" (`backup-NNN`, I imports into "(no folder)").
+- **LOAD FIRMWARE**: save first?, folder, snapshot; equal to the unit:
+  nothing to write; else the checks, CONFIRM (sectors from 0x4000, an
+  estimated time: 3 s + 90 ms a sector written + 45 ms a sector erased, a
+  guess to be checked on hardware; kept: startup, and calibration on the
+  SMK-37), writing, "Loaded and verified" with RESTART DEVICE / BACK TO
+  MENU.
+- **INFO**: device, firmware hint, what it holds, unit ID, battery, SD free
+  space and the number of snapshots, the version; L: the log's last 6 KB.
+- Not in the firmware manager: the unit label (U), the rescue (W), the old
+  single-key library; Recovery's advanced mode keeps those. Its LOAD asks
+  the same question (S save first, N no, ESC cancel) instead of the
+  auto-save.
+- To check on hardware: the connection when the unit is already on when
+  the USB host starts, and when it is switched on afterwards; that a unit
+  in download mode at connect is taken as is; the time estimate.
+
