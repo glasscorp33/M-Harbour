@@ -1,11 +1,21 @@
-Status: phase 2 (library and switching) built on branch `firmware-manager`
-and proven on an SMK-37 Elite with `0.3.0-fm.x` (results at the end). Version
-`0.4.0-fm.1` gives it its own screens (section 11): a home menu with
-Recovery and Firmware manager, connection without the power-on key, folders,
-and "save first?" in place of the auto-save; **this UI version is
-host-tested only, not yet run on a unit**. Phase 3 (`.fwsc` packages) and
-Wi-Fi time are not built.
-Units: M-VAVE FM-1 and SMK-37 Pro / Elite (owner has an FM-1 and an SMK-37 Elite).
+# M-Harbour firmware manager: design
+
+Status (2026-11-15): **built and tested on real units**, version 0.4.1
+(branch `firmware-manager`). Name: M-Harbour (formerly a fork of
+cardputer-synth-rescue). Units: M-VAVE FM-1 and SMK-37 Pro / Elite.
+
+Decisions since the first design:
+- Connection over USB MIDI only (the soft key), no power-on key: a healthy
+  unit never answers the power-on key.
+- No automatic save before a load: LOAD asks "save first?" only when what the
+  unit holds is not in the library (an auto-save on every load filled the card
+  with unclear files).
+- Folders (one level) per unit, typed names; the name window lists the names
+  already in the folder.
+- **Phase 3 (installing `.fwsc` packages on the Cardputer) dropped** for now:
+  a computer or phone is still needed to download a firmware, and it can
+  install it too. Only worth doing together with a Wi-Fi catalogue (the FM-1
+  Firmware Hub), as one feature.
 
 ## 1. Idea
 
@@ -281,3 +291,15 @@ device yet).
   the USB host starts, and when it is switched on afterwards; that a unit
   in download mode at connect is taken as is; the time estimate.
 
+
+## Hardware results (2026-11-15, FM-1, 0.4.0-fm.1)
+
+- Automatic connection: soft key sent without a key press, the unit back in
+  download mode in 1-2.5 s, every time, with Shrub ("M-VAVE FM-1",
+  4D4A:4155) and FMini-1 ("FM-1 Midi", 1209:0001).
+- BACKUP CURRENT into a folder, folders created, snapshots moved, an old
+  auto-save deleted.
+- LOAD Shrub -> FMini-1 (192 sectors, 34 s) and FMini-1 -> Shrub 1.06 (194
+  sectors, 23 s), verified, startup area kept; "save first?" asked when the
+  unit's state had changed (NO chosen).
+- 0.4.1: name M-Harbour; the library's folder keys on their own line.
