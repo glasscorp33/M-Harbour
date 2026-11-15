@@ -3,15 +3,18 @@
 // here: the steps that need them come through Hooks, so the order of things
 // is tested on a PC (tests/host/test_library.cpp) on the fake unit.
 //
+// Saving what the unit holds first is the caller's: the firmware manager
+// asks "save first?" when it is not in the library (library::saved_as), so
+// there is no auto-save in here.
+//
 //  1. the Cardputer's battery (hook; low: nothing done)
-//  2. the auto-save of the unit as it is (hook; failed: nothing written)
-//  3. the restore's checks on the snapshot (whole, two reads, CRC32, this
+//  2. the restore's checks on the snapshot (whole, two reads, CRC32, this
 //     unit by ID and factory data) and the model; refused: nothing written
-//  4. the plan from 0x4000 (the unit's boot area kept); nothing differs and
+//  3. the plan from 0x4000 (the unit's boot area kept); nothing differs and
 //     the boot areas are equal: nothing to do
-//  5. confirm (hook): write, cancel, or "restore exactly" when the boot
+//  4. confirm (hook): write, cancel, or "restore exactly" when the boot
 //     areas differ (then the plan from 0, confirmed again)
-//  6. the battery again, then the writer (never the protected ranges)
+//  5. the battery again, then the writer (never the protected ranges)
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -26,7 +29,6 @@ enum Choice { CANCEL, WRITE, EXACT };
 enum Outcome {
     CANCELLED,        // nothing written
     BATTERY_LOW,      // nothing written (err: why)
-    AUTOSAVE_FAILED,  // nothing written
     REFUSED,          // the checks said no (report.check.why, err)
     READ_FAILED,      // the unit or the card could not be read: nothing written
     NOTHING_TO_DO,    // the unit already holds the snapshot
@@ -58,8 +60,6 @@ struct Hooks {
     void *ctx;
     // false: too low to write (why says so). nullptr: not checked.
     bool (*battery)(void *ctx, char *why, size_t n);
-    // Stores the unit's whole flash in the library (or finds it there).
-    bool (*auto_save)(void *ctx, char *err, size_t errlen);
     // stage 0: the plan with the boot area kept (EXACT counts only if
     // boot_differs); stage 1: the exact plan (WRITE confirms it).
     Choice (*confirm)(void *ctx, int stage, const Report &r);

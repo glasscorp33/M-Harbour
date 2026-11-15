@@ -91,32 +91,34 @@ void suggest(const char *firmware, const char *date, const char *model, char *ou
     clean_name(s, out, outlen);
 }
 
-static bool starts_auto(const char *s) { return !strncmp(s, "auto ", 5) || !strncmp(s, "Auto ", 5); }
+// ---------------------------------------------------------------------------
+// Folders
 
-void auto_name(const char *target, const char *current, const char *firmware, const char *date, const char *model,
-               char *out, size_t outlen) {
-    char cur[NAME_CHARS + 1], d[NAME_CHARS + 1], s[2 * NAME_CHARS + 16];
-    clean_name(date, d, sizeof d);
-    // what the unit held is unknown (it may have changed since current was
-    // loaded), so the name says when it was made: before loading <target>
-    clean_name(target, cur, sizeof cur);
-    const char *t = cur;
-    while (starts_auto(t)) t += 5;
-    if (*t) {
-        snprintf(s, sizeof s, "auto before %s%s%s", t, d[0] ? " " : "", d);
-        clean_name(s, out, outlen);
-        return;
-    }
-    clean_name(current, cur, sizeof cur);
-    const char *c = cur;
-    while (starts_auto(c)) c += 5;
-    if (*c) snprintf(s, sizeof s, "auto %s%s%s", c, d[0] ? " " : "", d);
-    else {
-        char sug[NAME_CHARS + 1];
-        suggest(firmware, d, model, sug, sizeof sug);
-        snprintf(s, sizeof s, "auto %s", sug);
-    }
-    clean_name(s, out, outlen);
+bool folder_name(const char *typed, char *out, size_t outlen) {
+    if (!outlen) return false;
+    char clean[NAME_CHARS + 1];
+    clean_name(typed, clean, sizeof clean);
+    const char *s = clean;
+    while (*s == '.' || *s == ' ') s++;  // no hidden (".x") or dot-only names
+    size_t cap = outlen - 1 < FOLDER_CHARS ? outlen - 1 : FOLDER_CHARS, n = 0;
+    for (; *s && n < cap; s++) out[n++] = fat_bad((unsigned char)*s) ? '-' : *s;
+    while (n && (out[n - 1] == ' ' || out[n - 1] == '.')) n--;
+    out[n] = 0;
+    return n > 0;
+}
+
+bool same_folder(const char *a, const char *b) {
+    a = a ? a : "";
+    b = b ? b : "";
+    for (; *a && *b; a++, b++)
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+    return !*a && !*b;
+}
+
+void snapshot_path(const char *unit_dir, const char *folder, const char *base, const char *ext, char *out,
+                   size_t outlen) {
+    if (folder && folder[0]) snprintf(out, outlen, "%s/snapshots/%s/%s%s", unit_dir, folder, base, ext);
+    else snprintf(out, outlen, "%s/snapshots/%s%s", unit_dir, base, ext);
 }
 
 // ---------------------------------------------------------------------------
@@ -320,16 +322,18 @@ const char *whose_name(Whose w) {
     }
 }
 
-void snapshot_entry(int number, const char *base, const char *text, Entry *e) {
+void snapshot_entry(int number, const char *base, const char *text, Entry *e, const char *folder) {
     memset(e, 0, sizeof *e);
     e->kind = SNAPSHOT;
     e->number = number;
     copy(e->base, sizeof e->base, base);
+    copy(e->folder, sizeof e->folder, folder ? folder : "");
     e->whose = WHOSE_THIS;
     if (text) {
         static Meta m;  // large: not on the stack
         parse_meta(text, &m);
         copy(e->name, sizeof e->name, m.name);
+        copy(e->date, sizeof e->date, m.date);
         e->has_crc = m.notes.has_crc;
         e->crc = m.notes.crc;
         e->source = m.source;
@@ -391,6 +395,73 @@ int count_snapshots(const Entry *e, int n) {
     int c = 0;
     for (int i = 0; i < n; i++) c += e[i].kind == SNAPSHOT;
     return c;
+}
+
+void label(const Entry &e, char *out, size_t outlen) {
+    if (e.kind == SNAPSHOT && e.folder[0]) snprintf(out, outlen, "%s / %s", e.folder, e.name);
+    else snprintf(out, outlen, "%s", e.name);
+}
+
+int saved_as(const Entry *e, int n, uint32_t chip_crc, const int *skip, int nskip) {
+    for (int i = 0; i < n; i++) {
+        if (e[i].kind != SNAPSHOT || !e[i].has_crc || e[i].crc != chip_crc) continue;
+        bool skipped = false;
+        for (int k = 0; k < nskip; k++) skipped |= skip[k] == i;
+        if (!skipped) return i;
+    }
+    return -1;
+}
+
+static int folder_cmp(const char *a, const char *b) {
+    for (; *a && *b; a++, b++) {
+        int d = tolower((unsigned char)*a) - tolower((unsigned char)*b);
+        if (d) return d;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+int folders(const Entry *e, int n, const char (*dirs)[FOLDER_CHARS + 1], int ndirs, Folder *out, int max) {
+    if (max < 1) return 0;
+    int k = 0;
+    out[k].name[0] = 0;
+    k++;
+    for (int d = 0; d < ndirs && k < max; d++) {
+        if (!dirs[d][0]) continue;
+        bool dup = false;  // the card has it once; a list may not
+        for (int j = 1; j < k; j++) dup |= same_folder(out[j].name, dirs[d]);
+        if (dup) continue;
+        copy(out[k].name, sizeof out[k].name, dirs[d]);
+        k++;
+    }
+    for (int i = 2; i < k; i++)  // alphabetical, "(no folder)" stays first
+        for (int j = i; j > 1 && folder_cmp(out[j].name, out[j - 1].name) < 0; j--) {
+            Folder t = out[j];
+            out[j] = out[j - 1];
+            out[j - 1] = t;
+        }
+    for (int f = 0; f < k; f++) {
+        out[f].count = 0;
+        out[f].newest = -1;
+        for (int i = 0; i < n; i++) {
+            if (e[i].kind != SNAPSHOT || !same_folder(e[i].folder, out[f].name)) continue;
+            out[f].count++;
+            if (out[f].newest < 0 || e[i].number > e[out[f].newest].number) out[f].newest = i;
+        }
+    }
+    return k;
+}
+
+int in_folder(const Entry *e, int n, const char *folder, int *idx, int max) {
+    int k = 0;
+    for (int i = 0; i < n && k < max; i++)
+        if (e[i].kind == SNAPSHOT && same_folder(e[i].folder, folder)) idx[k++] = i;
+    for (int i = 1; i < k; i++)  // oldest (lowest number) first
+        for (int j = i; j > 0 && e[idx[j]].number < e[idx[j - 1]].number; j--) {
+            int t = idx[j];
+            idx[j] = idx[j - 1];
+            idx[j - 1] = t;
+        }
+    return k;
 }
 
 bool same_model(const char *unit_model, const char *snap_model) {

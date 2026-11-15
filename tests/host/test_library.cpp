@@ -116,7 +116,7 @@ static void test_names() {
 }
 
 static void test_suggestion() {
-    puts("library: the name window's suggestion, auto-save names");
+    puts("library: the name window's suggestion");
     char out[64];
     library::suggest("SMK37 Open   ", "14/11/26", "SMK-37", out, sizeof out);
     CHECK_STR(out, "SMK37 Open 14/11/26");
@@ -130,23 +130,54 @@ static void test_suggestion() {
     CHECK_STR(out, "snapshot");
     library::suggest("", "14/11/26", "", out, sizeof out);
     CHECK_STR(out, "14/11/26");
+}
 
-    library::auto_name("", "Dub 1", "", "", "SMK-37", out, sizeof out);
-    CHECK_STR(out, "auto Dub 1");
-    library::auto_name("", "Dub 1", "", "14/11/26", "SMK-37", out, sizeof out);
-    CHECK_STR(out, "auto Dub 1 14/11/26");
-    library::auto_name("", "auto Dub 1", "", "", "SMK-37", out, sizeof out);
-    CHECK_STR(out, "auto Dub 1");  // not "auto auto"
-    library::auto_name("", "", "FMini-1", "", "FM-1", out, sizeof out);
-    CHECK_STR(out, "auto FMini-1");
-    library::auto_name(nullptr, nullptr, nullptr, nullptr, "FM-1", out, sizeof out);
-    CHECK_STR(out, "auto FM-1");
-    library::auto_name("Seq A", "Test 1", "", "", "SMK-37", out, sizeof out);
-    CHECK_STR(out, "auto before Seq A");
-    library::auto_name("auto Seq A", "Test 1", "", "14/11/26", "SMK-37", out, sizeof out);
-    CHECK_STR(out, "auto before Seq A 14/11/26");
-    library::auto_name("", "abcdefghijklmnopqrstuvwxyz0123456789", "", "", "", out, sizeof out);
-    CHECK(strlen(out) == library::NAME_CHARS && !strncmp(out, "auto abc", 8));
+static void test_folder_names() {
+    puts("library: folder names (FAT-safe, typed by the user), paths");
+    char out[64];
+    CHECK(library::folder_name("SeqAdv", out, sizeof out));
+    CHECK_STR(out, "SeqAdv");
+    CHECK(library::folder_name("  Official   Open ", out, sizeof out));
+    CHECK_STR(out, "Official Open");
+    CHECK(library::folder_name("Dub/Hip:hop*?", out, sizeof out));
+    CHECK_STR(out, "Dub-Hip-hop--");
+    CHECK(library::folder_name("a\\b\"c<d>e|f", out, sizeof out));
+    CHECK_STR(out, "a-b-c-d-e-f");
+    CHECK(library::folder_name("..hidden", out, sizeof out));  // no leading dots
+    CHECK_STR(out, "hidden");
+    CHECK(library::folder_name("v1.", out, sizeof out));  // FAT drops a trailing dot
+    CHECK_STR(out, "v1");
+    CHECK(library::folder_name("caf\xc3\xa9", out, sizeof out));
+    CHECK_STR(out, "caf--");
+    CHECK(!library::folder_name("", out, sizeof out) && !out[0]);
+    CHECK(!library::folder_name("   ", out, sizeof out) && !out[0]);
+    CHECK(!library::folder_name("...", out, sizeof out) && !out[0]);
+    CHECK(!library::folder_name(". .", out, sizeof out) && !out[0]);
+    CHECK(!library::folder_name(nullptr, out, sizeof out));
+    CHECK(library::folder_name("abcdefghijklmnopqrstuvwxyz0123456789", out, sizeof out));
+    CHECK(strlen(out) == library::FOLDER_CHARS);
+    CHECK(library::folder_name("abcdefghijklmnopqrstuvw xyz", out, sizeof out));  // cut at the space
+    CHECK_STR(out, "abcdefghijklmnopqrstuvw");
+    CHECK(library::folder_name("abcdef", out, 4));  // a small buffer
+    CHECK_STR(out, "abc");
+
+    CHECK(library::same_folder("SeqAdv", "seqadv"));
+    CHECK(library::same_folder("", ""));
+    CHECK(library::same_folder(nullptr, ""));
+    CHECK(!library::same_folder("SeqAdv", "SeqAdv2"));
+    CHECK(!library::same_folder("SeqAdv", ""));
+
+    library::snapshot_path("/fm1/units/41", "", "0003 Dub 1", ".bin", out, sizeof out);
+    CHECK_STR(out, "/fm1/units/41/snapshots/0003 Dub 1.bin");
+    library::snapshot_path("/fm1/units/41", nullptr, "0003 Dub 1", ".txt", out, sizeof out);
+    CHECK_STR(out, "/fm1/units/41/snapshots/0003 Dub 1.txt");
+    library::snapshot_path("/fm1/units/41", "SeqAdv", "0003 Dub 1", ".txt", out, sizeof out);
+    CHECK_STR(out, "/fm1/units/41/snapshots/SeqAdv/0003 Dub 1.txt");
+    // the longest: a unit ID, a folder and a name at their limits, in 128 bytes
+    char longest[160];
+    library::snapshot_path("/fm1/units/k980F-f12345678", "abcdefghijklmnopqrstuvwx",
+                           "9999 abcdefghijklmnopqrstuvwxyz012345", ".bin", longest, sizeof longest);
+    CHECK(strlen(longest) < 128);
 }
 
 static void test_meta() {
@@ -323,6 +354,103 @@ static void test_list() {
     CHECK(library::same_model("SMK-37", ""));
 }
 
+// A snapshot entry with a .txt, in a folder.
+static library::Entry snap_entry(int number, const char *name, uint32_t crc, const char *folder,
+                                 const char *date = "") {
+    library::Meta m;
+    char txt[512], base[64];
+    library::meta_for(unit_info(UID_A), name, date, "SMK-37", "", library::SRC_BACKUP, crc, &m);
+    CHECK(library::format_meta(m, txt, sizeof txt));
+    library::base_name(number, name, base, sizeof base);
+    library::Entry e;
+    library::snapshot_entry(number, base, txt, &e, folder);
+    return e;
+}
+
+static void test_folders() {
+    puts("library: folders with counts and the newest, a folder's snapshots oldest first");
+    std::vector<library::Entry> e;
+    e.push_back(snap_entry(5, "SeqAdv 0.1 Dub 1", 0xCA16BF6B, "SeqAdv", "15/11/26"));
+    e.push_back(snap_entry(1, "First backup", 0x11223344, ""));
+    e.push_back(snap_entry(3, "Stock 1.0", 0x8E21C0D4, "Official Open"));
+    e.push_back(snap_entry(7, "SeqAdv 0.1 Hiphop 2", 0x454EFEE3, "seqadv"));  // FAT: the same folder
+    e.push_back(snap_entry(4, "SeqAdv 0.1 Blank", 0x20AABDB6, "SeqAdv"));
+    library::Entry old;
+    library::legacy_entry(9, "chip key: 980F\nflash id: 856014\ncrc32: 99\n", unit_info(UID_A), &old);
+    e.push_back(old);
+    CHECK_STR(e[0].folder, "SeqAdv");
+    CHECK_STR(e[0].date, "15/11/26");
+    CHECK_STR(e[1].folder, "");
+    CHECK_STR(old.folder, "");
+
+    const char dirs[][library::FOLDER_CHARS + 1] = {"SeqAdv", "Official Open", "Baud Girl", "", "SEQADV"};
+    library::Folder f[8];
+    int nf = library::folders(e.data(), (int)e.size(), dirs, 5, f, 8);
+    CHECK(nf == 4);  // (no folder), then three, alphabetical; "" and a second SeqAdv dropped
+    CHECK_STR(f[0].name, "");
+    CHECK_STR(f[1].name, "Baud Girl");
+    CHECK_STR(f[2].name, "Official Open");
+    CHECK_STR(f[3].name, "SeqAdv");
+    CHECK(f[0].count == 1 && f[0].newest == 1);  // the old backup is not in "(no folder)"
+    CHECK(f[1].count == 0 && f[1].newest == -1);  // an empty folder is listed
+    CHECK(f[2].count == 1 && f[2].newest == 2);
+    CHECK(f[3].count == 3 && f[3].newest == 3);  // number 7 is the newest
+    // no folders on the card: only "(no folder)"
+    CHECK(library::folders(e.data(), (int)e.size(), dirs, 0, f, 8) == 1 && f[0].count == 1);
+    // room for two: "(no folder)" and the first in the card's order
+    CHECK(library::folders(e.data(), (int)e.size(), dirs, 5, f, 2) == 2);
+    CHECK(library::folders(e.data(), (int)e.size(), dirs, 5, f, 0) == 0);
+
+    int idx[8];
+    int k = library::in_folder(e.data(), (int)e.size(), "SeqAdv", idx, 8);
+    CHECK(k == 3 && e[idx[0]].number == 4 && e[idx[1]].number == 5 && e[idx[2]].number == 7);
+    CHECK(library::in_folder(e.data(), (int)e.size(), "", idx, 8) == 1 && idx[0] == 1);
+    CHECK(library::in_folder(e.data(), (int)e.size(), "Baud Girl", idx, 8) == 0);
+    CHECK(library::in_folder(e.data(), (int)e.size(), "SeqAdv", idx, 2) == 2);
+
+    // numbers stay unique across the unit's folders
+    CHECK(library::next_number(e.data(), (int)e.size()) == 8);
+
+    char out[80];
+    library::label(e[0], out, sizeof out);
+    CHECK_STR(out, "SeqAdv / SeqAdv 0.1 Dub 1");
+    library::label(e[1], out, sizeof out);
+    CHECK_STR(out, "First backup");
+    library::label(old, out, sizeof out);
+    CHECK_STR(out, "backup-009");
+}
+
+static void test_saved_as() {
+    puts("library: is what the device holds saved? (LOAD asks \"save first?\" only if not)");
+    std::vector<library::Entry> e;
+    e.push_back(snap_entry(1, "First backup", 0x11223344, ""));
+    e.push_back(snap_entry(2, "Dub 1", 0xCA16BF6B, "SeqAdv"));
+    e.push_back(snap_entry(3, "Dub 1 copy", 0xCA16BF6B, "Other"));
+    library::Entry bare;
+    library::snapshot_entry(4, "0004 lost", nullptr, &bare, "SeqAdv");  // no .txt: no CRC
+    e.push_back(bare);
+    library::Entry old;
+    library::legacy_entry(9, "chip key: 980F\nflash id: 856014\ncrc32: 77777777\n", unit_info(UID_A), &old);
+    e.push_back(old);
+    int n = (int)e.size();
+    // in another folder than "(no folder)": found all the same
+    CHECK(library::saved_as(e.data(), n, 0xCA16BF6B, nullptr, 0) == 1);
+    CHECK(library::saved_as(e.data(), n, 0x11223344, nullptr, 0) == 0);
+    // not there: ask
+    CHECK(library::saved_as(e.data(), n, 0xDEADBEEF, nullptr, 0) == -1);
+    // an old backup-NNN is not the library: ask
+    CHECK(library::saved_as(e.data(), n, 0x77777777, nullptr, 0) == -1);
+    // the first one's file failed its check: the copy in another folder counts
+    int skip[2] = {1, 2};
+    CHECK(library::saved_as(e.data(), n, 0xCA16BF6B, skip, 1) == 2);
+    // both failed: not saved, ask
+    CHECK(library::saved_as(e.data(), n, 0xCA16BF6B, skip, 2) == -1);
+    // an empty library: ask
+    CHECK(library::saved_as(e.data(), 0, 0xCA16BF6B, nullptr, 0) == -1);
+    // a snapshot without its .txt never counts (its CRC is not known), even CRC 0
+    CHECK(library::saved_as(&bare, 1, 0, nullptr, 0) == -1);
+}
+
 static void test_battery() {
     puts("library: the battery before a write");
     int p;
@@ -368,24 +496,17 @@ static void make_unit(uint8_t *f, int boot, int fw, int seed = 3) {
 struct Run {
     // what the hooks did, and in what order
     std::vector<std::string> steps;
-    bool autosave_ok = true;
-    size_t ops_at_autosave = 99;
+    size_t ops_at_confirm = 99;
     int choice0 = switcher::WRITE, choice1 = switcher::WRITE;
     bool boot_differs_seen = false;
     int battery_calls = 0;
     bool battery_ok = true;
 };
 
-static bool h_autosave(void *ctx, char *err, size_t errlen) {
-    Run *r = (Run *)ctx;
-    r->steps.push_back("autosave");
-    r->ops_at_autosave = fake::ops.size();
-    if (!r->autosave_ok) snprintf(err, errlen, "SD card full");
-    return r->autosave_ok;
-}
 static switcher::Choice h_confirm(void *ctx, int stage, const switcher::Report &rep) {
     Run *r = (Run *)ctx;
     r->steps.push_back(stage ? "confirm-exact" : "confirm");
+    if (!stage) r->ops_at_confirm = fake::ops.size();
     if (!stage) r->boot_differs_seen = rep.boot_differs;
     return (switcher::Choice)(stage ? r->choice1 : r->choice0);
 }
@@ -431,7 +552,6 @@ static switcher::Outcome do_load(Snap &snap, const jl::Info &info, Run &run, con
     req.name = "0002 Dub 1";
     switcher::Hooks h = {};
     h.ctx = &run;
-    h.auto_save = h_autosave;
     h.confirm = h_confirm;
     h.battery = h_battery;
     h.log = getenv("VERBOSE") ? verbose : quiet;
@@ -448,7 +568,7 @@ static switcher::Outcome do_load(Snap &snap, const jl::Info &info, Run &run, con
 static bool protected_untouched() { return !fake::touched(0xC0000, 0xC2000) && !fake::touched(0xFF000, SIZE); }
 
 static void test_load_keeps_boot() {
-    puts("load: auto-save first, then the snapshot from 0x4000, the boot area kept");
+    puts("load: no auto-save; the snapshot from 0x4000, the boot area kept");
     fake::reset();
     make_unit(fake::flash, 1, 0x00);
     std::vector<uint8_t> before(fake::flash, fake::flash + SIZE);
@@ -459,8 +579,9 @@ static void test_load_keeps_boot() {
     Run run;
     switcher::Report rep;
     CHECK(do_load(snap, info, run, "SMK-37", nullptr, &rep) == switcher::WRITTEN);
-    CHECK(run.ops_at_autosave == 0);  // nothing erased or programmed before the auto-save
-    CHECK(!run.steps.empty() && run.steps[0] == "battery" && run.steps[1] == "autosave");
+    CHECK(run.ops_at_confirm == 0);  // nothing erased or programmed before the confirmation
+    CHECK(run.steps.size() == 3 && run.steps[0] == "battery" && run.steps[1] == "confirm" &&
+          run.steps[2] == "battery");  // no auto-save step any more
     CHECK(run.boot_differs_seen && rep.boot_differs);
     CHECK(rep.start == writer::BOOT_AREA);
     CHECK(rep.check.verdict == restore::SAME_BY_ID);
@@ -529,7 +650,7 @@ static void test_load_refused() {
     CHECK(do_load(snap, other, run, "SMK-37", nullptr, &rep) == switcher::REFUSED);
     CHECK(rep.check.verdict == restore::OTHER_UNIT);
     CHECK(fake::ops.empty() && !memcmp(fake::flash, before.data(), SIZE));
-    CHECK(run.steps.size() == 2 && run.steps[1] == "autosave");  // the auto-save came first, no confirm
+    CHECK(run.steps.size() == 1 && run.steps[0] == "battery");  // refused before any question
     // another unit's factory data (same ID claimed)
     fake::reset();
     make_unit(fake::flash, 1, 0x00, 7);
@@ -563,19 +684,30 @@ static void test_load_refused() {
     CHECK(fake::ops.empty());
 }
 
-static void test_load_autosave_fails() {
-    puts("load: a failed auto-save stops the load before anything");
-    fake::reset();
-    make_unit(fake::flash, 1, 0x00);
-    std::vector<uint8_t> before(fake::flash, fake::flash + SIZE);
+static void test_load_wrong_unit_never_saves_or_writes() {
+    puts("load: without the auto-save, a wrong unit or file is still refused before anything");
     Snap snap;
     snap.data.resize(SIZE);
     make_unit(snap.data.data(), 9, 0x5A);
+    // the snapshot of unit A on unit B, B's flash its own: refused, nothing read into a file, nothing written
+    fake::reset();
+    make_unit(fake::flash, 1, 0x00, 5);
+    std::vector<uint8_t> before(fake::flash, fake::flash + SIZE);
     Run run;
-    run.autosave_ok = false;
-    CHECK(do_load(snap, unit_info(UID_A, 0xEB6014), run) == switcher::AUTOSAVE_FAILED);
+    switcher::Report rep;
+    CHECK(do_load(snap, unit_info(UID_B, 0xEB6014), run, "SMK-37", nullptr, &rep) == switcher::REFUSED);
+    CHECK(rep.check.verdict == restore::OTHER_UNIT);
     CHECK(fake::ops.empty() && !memcmp(fake::flash, before.data(), SIZE));
-    CHECK(run.steps.back() == "autosave");  // no check, no confirm after it
+    CHECK((std::find(run.steps.begin(), run.steps.end(), "confirm") == run.steps.end()));
+    // an FM-1 snapshot offered to the SMK-37: refused by model before the checks read anything
+    Run r2;
+    CHECK(do_load(snap, unit_info(UID_A, 0xEB6014), r2, "FM-1", nullptr, &rep) == switcher::REFUSED);
+    CHECK(fake::ops.empty() && strstr(rep.check.why, "FM-1") != nullptr);
+    // no .txt: refused
+    Run r3;
+    restore::Notes none = {};
+    CHECK(do_load(snap, unit_info(UID_A, 0xEB6014), r3, "SMK-37", &none) == switcher::REFUSED);
+    CHECK(fake::ops.empty());
 }
 
 static void test_load_battery_cancel_nothing() {
@@ -590,7 +722,7 @@ static void test_load_battery_cancel_nothing() {
     Run low;
     low.battery_ok = false;
     CHECK(do_load(snap, info, low) == switcher::BATTERY_LOW);
-    CHECK(fake::ops.empty() && low.steps.size() == 1);  // not even the auto-save
+    CHECK(fake::ops.empty() && low.steps.size() == 1);  // nothing after the battery
     Run cancel;
     cancel.choice0 = switcher::CANCEL;
     CHECK(do_load(snap, info, cancel) == switcher::CANCELLED);
@@ -615,14 +747,17 @@ static void test_load_battery_cancel_nothing() {
 int main() {
     test_names();
     test_suggestion();
+    test_folder_names();
     test_meta();
     test_unit();
     test_list();
+    test_folders();
+    test_saved_as();
     test_battery();
     test_load_keeps_boot();
     test_load_exact();
     test_load_refused();
-    test_load_autosave_fails();
+    test_load_wrong_unit_never_saves_or_writes();
     test_load_battery_cancel_nothing();
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

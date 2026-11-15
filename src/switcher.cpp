@@ -11,7 +11,6 @@ const char *outcome_name(Outcome o) {
     switch (o) {
         case CANCELLED: return "cancelled";
         case BATTERY_LOW: return "battery low";
-        case AUTOSAVE_FAILED: return "auto-save failed";
         case REFUSED: return "refused";
         case READ_FAILED: return "read failed";
         case NOTHING_TO_DO: return "nothing to do";
@@ -31,13 +30,7 @@ Outcome load(const Request &req, const Hooks &h, Report *rep, char *err, size_t 
         return BATTERY_LOW;
     }
 
-    // 1. the unit as it is now, kept before anything else
-    if (!h.auto_save(h.ctx, err, errlen)) {
-        h.log("Auto-save failed (%s): nothing written", err);
-        return AUTOSAVE_FAILED;
-    }
-
-    // 2. the snapshot: this unit's, whole, intact, the same model
+    // 1. the snapshot: this unit's, whole, intact, the same model
     if (!library::same_model(req.unit_model, req.snap_model)) {
         snprintf(rep->check.why, sizeof rep->check.why, "a %s snapshot, the unit is an %s", req.snap_model,
                  req.unit_model);
@@ -57,7 +50,7 @@ Outcome load(const Request &req, const Hooks &h, Report *rep, char *err, size_t 
         return REFUSED;
     }
 
-    // 3. what differs, the unit's boot area kept
+    // 2. what differs, the unit's boot area kept
     if (!jl::crc32(0, writer::BOOT_AREA, &rep->unit_boot_crc, err, errlen)) {
         h.log("Reading the unit failed: %s", err);
         return READ_FAILED;
@@ -79,7 +72,7 @@ Outcome load(const Request &req, const Hooks &h, Report *rep, char *err, size_t 
         return NOTHING_TO_DO;
     }
 
-    // 4. confirmed by the user; the boot area only when asked, twice
+    // 3. confirmed by the user; the boot area only when asked, twice
     Choice c = h.confirm(h.ctx, 0, *rep);
     if (c == EXACT && rep->boot_differs) {
         img = writer::full_image(board, req.name, req.src, 0);
@@ -107,7 +100,7 @@ Outcome load(const Request &req, const Hooks &h, Report *rep, char *err, size_t 
         return BATTERY_LOW;
     }
 
-    // 5. the write
+    // 4. the write
     h.log("Writing %s from 0x%05lX", req.name, (unsigned long)rep->start);
     if (!writer::apply(img, rep->plan, h.log, h.progress, err, errlen)) {
         h.log("Write stopped: %s", err);

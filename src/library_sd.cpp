@@ -45,12 +45,12 @@ static void snap_dir(const Unit &u, char *out, size_t n) { snprintf(out, n, "%s/
 
 void bin_path(const Unit &u, const library::Entry &e, char *out, size_t n) {
     if (e.kind == library::LEGACY) snprintf(out, n, "/fm1/backup-%03d.bin", e.number);
-    else snprintf(out, n, "%s/snapshots/%s.bin", u.dir, e.base);
+    else library::snapshot_path(u.dir, e.folder, e.base, ".bin", out, n);
 }
 
 void txt_path(const Unit &u, const library::Entry &e, char *out, size_t n) {
     if (e.kind == library::LEGACY) snprintf(out, n, "/fm1/backup-%03d.txt", e.number);
-    else snprintf(out, n, "%s/snapshots/%s.txt", u.dir, e.base);
+    else library::snapshot_path(u.dir, e.folder, e.base, ".txt", out, n);
 }
 
 bool read_meta(const Unit &u, const library::Entry &e, library::Meta *m) {
@@ -158,39 +158,73 @@ static int highest;
 // The next number: one more than the highest file there is, even unlisted.
 static int next_number() { return highest < library::NUMBER_MAX ? highest + 1 : 0; }
 
-static int scan(const Unit &u, const jl::Info &info, library::Entry *e, int max, bool legacy) {
-    highest = 0;
-    if (!sd_ready()) return 0;
-    int n = 0;
+// A directory in snapshots/ that is a folder this app could have made (its
+// name is its own folder_name; others, ".Trashes" and the like, are left
+// alone): copied to out.
+static bool app_folder(const char *name, char *out) {
+    size_t n = strlen(name);
+    char safe[library::FOLDER_CHARS + 1];
+    if (n > library::FOLDER_CHARS || !library::folder_name(name, safe, sizeof safe) || strcmp(safe, name))
+        return false;
+    memcpy(out, name, n + 1);
+    return true;
+}
+
+// The folders found by the last scan.
+static char dirs[library::MAX_FOLDERS][library::FOLDER_CHARS + 1];
+
+// Lists one directory: its snapshot files into e (from n, at most max) and,
+// with subdirs, the folders in it into dirs. Returns the new n. Names first,
+// the .txt files once the directory is closed (few files open at a time).
+static int scan_dir(const Unit &u, const char *folder, library::Entry *e, int n, int max, int *ndirs) {
     char path[PATH];
-    snap_dir(u, path, sizeof path);
+    if (folder[0]) snprintf(path, sizeof path, "%s/snapshots/%s", u.dir, folder);
+    else snap_dir(u, path, sizeof path);
     File dir = SD.open(path);
-    if (dir) {
-        // names first, the .txt files once the folder is closed
-        for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
-            int num;
-            char base[sizeof e[0].base];
-            bool ok = !f.isDirectory() && library::parse_snapshot_file(leaf(f), ".bin", &num, base, sizeof base);
-            f.close();
-            if (ok && num > highest) highest = num;
-            if (ok && n < max) {
-                memset(&e[n], 0, sizeof e[n]);
-                e[n].number = num;
-                snprintf(e[n].base, sizeof e[n].base, "%s", base);
-                n++;
-            }
+    if (!dir) return n;
+    int first = n;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        int num;
+        char base[sizeof e[0].base];
+        bool is_dir = f.isDirectory();
+        if (is_dir && ndirs && *ndirs < library::MAX_FOLDERS && app_folder(leaf(f), dirs[*ndirs])) (*ndirs)++;
+        bool ok = !is_dir && library::parse_snapshot_file(leaf(f), ".bin", &num, base, sizeof base);
+        f.close();
+        if (ok && num > highest) highest = num;
+        if (ok && n < max) {
+            memset(&e[n], 0, sizeof e[n]);
+            e[n].number = num;
+            snprintf(e[n].base, sizeof e[n].base, "%s", base);
+            n++;
         }
-        dir.close();
     }
-    for (int i = 0; i < n; i++) {
+    dir.close();
+    for (int i = first; i < n; i++) {
         char base[sizeof e[0].base];
         snprintf(base, sizeof base, "%s", e[i].base);
-        snprintf(path, sizeof path, "%s/snapshots/%s.txt", u.dir, base);
-        library::snapshot_entry(e[i].number, base, read_text(path) ? text : nullptr, &e[i]);
+        library::snapshot_path(u.dir, folder, base, ".txt", path, sizeof path);
+        library::snapshot_entry(e[i].number, base, read_text(path) ? text : nullptr, &e[i], folder);
     }
+    return n;
+}
+
+static int n_dirs;
+
+static int scan(const Unit &u, const jl::Info &info, library::Entry *e, int max, bool legacy) {
+    highest = 0;
+    n_dirs = 0;
+    if (!sd_ready()) return 0;
+    int n = scan_dir(u, "", e, 0, max, &n_dirs);
+    // every folder, for the numbers even past `max`
+    for (int d = 0; d < n_dirs; d++) {
+        char folder[library::FOLDER_CHARS + 1];
+        snprintf(folder, sizeof folder, "%s", dirs[d]);
+        n = scan_dir(u, folder, e, n, max, nullptr);
+    }
+    char path[PATH];
     if (legacy) {
         int first = n;
-        dir = SD.open("/fm1");
+        File dir = SD.open("/fm1");
         if (dir) {
             for (File f = dir.openNextFile(); f && n < max; f = dir.openNextFile()) {
                 int num;
@@ -210,6 +244,21 @@ static int scan(const Unit &u, const jl::Info &info, library::Entry *e, int max,
     return n;
 }
 
+int folder_dirs(const Unit &u, char (*out)[library::FOLDER_CHARS + 1], int max) {
+    int k = 0;
+    if (!sd_ready()) return 0;
+    char path[PATH];
+    snap_dir(u, path, sizeof path);
+    File dir = SD.open(path);
+    if (!dir) return 0;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        if (f.isDirectory() && k < max && k < library::MAX_FOLDERS && app_folder(leaf(f), out[k])) k++;
+        f.close();
+    }
+    dir.close();
+    return k;
+}
+
 int list(const Unit &u, const jl::Info &info, library::Entry *e, int max) { return scan(u, info, e, max, true); }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +269,18 @@ static bool write_meta(const char *path, const library::Meta &m) {
     return write_text(path, text);
 }
 
-bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware, library::Source source, int *number,
-          engine::Progress progress) {
+bool save(Unit *u, const jl::Info &info, const char *folder, const char *name, const char *firmware,
+          library::Source source, int *number, uint32_t *out_crc, engine::Progress progress) {
     if (!ensure(u, info)) return false;
+    folder = folder ? folder : "";
+    if (folder[0]) {
+        char dir[PATH];
+        snprintf(dir, sizeof dir, "%s/snapshots/%s", u->dir, folder);
+        if (!SD.exists(dir)) {
+            ulog("No folder %s: nothing saved.", dir + 5);
+            return false;
+        }
+    }
     scan(*u, info, scratch, MAX_ENTRIES, false);
     int num = next_number();
     if (!num) {
@@ -231,8 +289,8 @@ bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware,
     }
     char base[library::BASE_LEN], bin[PATH], txt[PATH];
     library::base_name(num, name, base, sizeof base);
-    snprintf(bin, sizeof bin, "%s/snapshots/%s.bin", u->dir, base);
-    snprintf(txt, sizeof txt, "%s/snapshots/%s.txt", u->dir, base);
+    library::snapshot_path(u->dir, folder, base, ".bin", bin, sizeof bin);
+    library::snapshot_path(u->dir, folder, base, ".txt", txt, sizeof txt);
     if (SD.exists(bin) || SD.exists(txt)) {
         ulog("%s is there already: nothing saved.", bin);
         return false;
@@ -254,47 +312,31 @@ bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware,
         ulog("Its .txt could not be written: not saved.");
         return false;
     }
-    ulog("Saved %s (%s), CRC32 %08lX", base, library::source_name(source), (unsigned long)crc);
+    ulog("Saved %s%s%s (%s), CRC32 %08lX", folder, folder[0] ? "/" : "", base, library::source_name(source),
+         (unsigned long)crc);
     *number = num;
+    if (out_crc) *out_crc = crc;
     return true;
 }
 
-bool auto_save(Unit *u, const jl::Info &info, const char *firmware, const char *target, char *what, size_t whatlen,
-               engine::Progress progress) {
-    char err[96];
-    uint32_t chip;
-    if (!jl::crc32(0, restore::FLASH_SIZE, &chip, err, sizeof err)) {
-        ulog("Chip CRC failed: %s", err);
-        return false;
+bool file_matches(const Unit &u, const library::Entry &e) {
+    if (!e.has_crc) return false;
+    char bin[PATH];
+    uint32_t file;
+    bin_path(u, e, bin, sizeof bin);
+    bool ok = engine::file_crc(bin, &file) && file == e.crc;
+    if (!ok) ulog("%s: its file is not its CRC32 %08lX", e.base, (unsigned long)e.crc);
+    return ok;
+}
+
+int saved_as(const Unit &u, const library::Entry *e, int n, uint32_t chip_crc) {
+    int bad[8], nbad = 0;
+    for (;;) {
+        int i = library::saved_as(e, n, chip_crc, bad, nbad);
+        if (i < 0 || file_matches(u, e[i])) return i;
+        if (nbad == (int)(sizeof bad / sizeof bad[0])) return -1;
+        bad[nbad++] = i;
     }
-    if (!ensure(u, info)) return false;
-    int n = scan(*u, info, scratch, MAX_ENTRIES, false);
-    int i = library::find_crc(scratch, n, chip);
-    if (i >= 0) {
-        // the same CRC32 in a .txt: kept only if its file really is that
-        char bin[PATH];
-        uint32_t file;
-        bin_path(*u, scratch[i], bin, sizeof bin);
-        if (engine::file_crc(bin, &file) && file == chip) {
-            snprintf(what, whatlen, "equals %s", scratch[i].base);
-            ulog("Auto-save: the unit equals %s (CRC32 %08lX), not stored again", scratch[i].base,
-                 (unsigned long)chip);
-            return true;
-        }
-        ulog("Auto-save: %s's file is not its CRC32: saving anew", scratch[i].base);
-    }
-    int cur = current(*u);
-    const char *cur_name = "";
-    for (int k = 0; k < n; k++)
-        if (scratch[k].number == cur) cur_name = scratch[k].name;
-    char name[library::NAME_CHARS + 1];
-    library::auto_name(target, cur_name, firmware, today(), u->model, name, sizeof name);
-    int num;
-    if (!save(u, info, name, firmware, library::SRC_AUTO, &num, progress)) return false;
-    char base[library::BASE_LEN];
-    library::base_name(num, name, base, sizeof base);
-    snprintf(what, whatlen, "%s", base);
-    return true;
 }
 
 bool import(Unit *u, const jl::Info &info, const library::Entry &legacy, const char *name, int *number,
@@ -311,8 +353,8 @@ bool import(Unit *u, const jl::Info &info, const library::Entry &legacy, const c
     char base[library::BASE_LEN], from[PATH], bin[PATH], txt[PATH];
     library::base_name(num, name, base, sizeof base);
     bin_path(*u, legacy, from, sizeof from);
-    snprintf(bin, sizeof bin, "%s/snapshots/%s.bin", u->dir, base);
-    snprintf(txt, sizeof txt, "%s/snapshots/%s.txt", u->dir, base);
+    library::snapshot_path(u->dir, "", base, ".bin", bin, sizeof bin);
+    library::snapshot_path(u->dir, "", base, ".txt", txt, sizeof txt);
     if (SD.exists(bin)) return false;
     ulog("Importing %s to %s", from + 5, bin + 5);
     File in = SD.open(from, FILE_READ), out = SD.open(bin, FILE_WRITE);
@@ -364,7 +406,8 @@ bool rename(const Unit &u, const library::Entry &e, const char *name) {
     bin_path(u, to, nb, sizeof nb);
     txt_path(u, to, nt, sizeof nt);
     if (strcmp(e.base, to.base)) {
-        if (SD.exists(nb) || SD.exists(nt)) {
+        // FAT: a name that differs only in case is the same file
+        if (!library::same_folder(e.base, to.base) && (SD.exists(nb) || SD.exists(nt))) {
             ulog("%s is there already: not renamed.", nb);
             return false;
         }
@@ -395,6 +438,135 @@ bool remove(const Unit &u, const library::Entry &e) {
     ulog(ok ? "Deleted %s" : "Cannot delete %s", e.base);
     if (ok && current(u) == e.number) set_current(u, 0, "");
     return ok;
+}
+
+bool move(const Unit &u, const library::Entry &e, const char *to_folder) {
+    to_folder = to_folder ? to_folder : "";
+    if (e.kind != library::SNAPSHOT) return false;
+    if (library::same_folder(e.folder, to_folder)) return true;
+    library::Entry to = e;
+    snprintf(to.folder, sizeof to.folder, "%s", to_folder);
+    char ob[PATH], ot[PATH], nb[PATH], nt[PATH];
+    bin_path(u, e, ob, sizeof ob);
+    txt_path(u, e, ot, sizeof ot);
+    bin_path(u, to, nb, sizeof nb);
+    txt_path(u, to, nt, sizeof nt);
+    if (to_folder[0]) {
+        char dir[PATH];
+        snprintf(dir, sizeof dir, "%s/snapshots/%s", u.dir, to_folder);
+        if (!SD.exists(dir)) {
+            ulog("No folder %s: not moved.", dir + 5);
+            return false;
+        }
+    }
+    if (SD.exists(nb) || SD.exists(nt)) {
+        ulog("%s is there already: not moved.", nb + 5);
+        return false;
+    }
+    // the .txt goes with its .bin; without a .txt only the .bin moves
+    bool has_txt = SD.exists(ot);
+    if (!SD.rename(ob, nb)) {
+        ulog("Cannot move %s", ob + 5);
+        return false;
+    }
+    if (has_txt && !SD.rename(ot, nt)) {
+        SD.rename(nb, ob);
+        ulog("Cannot move %s", ot + 5);
+        return false;
+    }
+    ulog("Moved %s from \"%s\" to \"%s\"", e.base, e.folder, to_folder);
+    return true;
+}
+
+static bool folder_path(const Unit &u, const char *name, char *out, size_t n) {
+    return snprintf(out, n, "%s/snapshots/%s", u.dir, name) < (int)n;
+}
+
+bool make_folder(Unit *u, const jl::Info &info, const char *typed, char *made, size_t madelen, char *why,
+                 size_t whylen) {
+    char name[library::FOLDER_CHARS + 1], path[PATH];
+    if (!library::folder_name(typed, name, sizeof name)) {
+        snprintf(why, whylen, "Type a name for the folder.");
+        return false;
+    }
+    if (!ensure(u, info)) {
+        snprintf(why, whylen, "The SD card cannot be written.");
+        return false;
+    }
+    folder_path(*u, name, path, sizeof path);
+    if (SD.exists(path)) {
+        snprintf(why, whylen, "\"%s\" is there already.", name);
+        return false;
+    }
+    if (!SD.mkdir(path) || !SD.exists(path)) {
+        ulog("Cannot create %s", path);
+        snprintf(why, whylen, "The SD card cannot be written.");
+        return false;
+    }
+    ulog("Library: folder \"%s\"", name);
+    snprintf(made, madelen, "%s", name);
+    return true;
+}
+
+bool rename_folder(const Unit &u, const char *from, const char *typed, char *made, size_t madelen, char *why,
+                   size_t whylen) {
+    char name[library::FOLDER_CHARS + 1], op[PATH], np[PATH];
+    if (!from || !from[0]) {
+        snprintf(why, whylen, "\"(no folder)\" keeps its name.");
+        return false;
+    }
+    if (!library::folder_name(typed, name, sizeof name)) {
+        snprintf(why, whylen, "Type a name for the folder.");
+        return false;
+    }
+    folder_path(u, from, op, sizeof op);
+    folder_path(u, name, np, sizeof np);
+    if (strcmp(from, name)) {
+        // another name, or only another case (FAT: the same folder)
+        if (!library::same_folder(from, name) && SD.exists(np)) {
+            snprintf(why, whylen, "\"%s\" is there already.", name);
+            return false;
+        }
+        if (!SD.rename(op, np)) {
+            ulog("Cannot rename %s", op);
+            snprintf(why, whylen, "The SD card cannot be written.");
+            return false;
+        }
+        ulog("Library: folder \"%s\" renamed \"%s\"", from, name);
+    }
+    snprintf(made, madelen, "%s", name);
+    return true;
+}
+
+bool remove_folder(const Unit &u, const char *name, char *why, size_t whylen) {
+    char path[PATH];
+    if (!name || !name[0]) {
+        snprintf(why, whylen, "\"(no folder)\" cannot be deleted.");
+        return false;
+    }
+    folder_path(u, name, path, sizeof path);
+    File dir = SD.open(path);
+    if (!dir) {
+        snprintf(why, whylen, "The folder cannot be read.");
+        return false;
+    }
+    int files = 0;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        files++;
+        f.close();
+    }
+    dir.close();
+    if (files) {
+        snprintf(why, whylen, "Not empty: move or delete what is in it first.");
+        return false;
+    }
+    if (!SD.rmdir(path)) {
+        ulog("Cannot delete %s", path);
+        snprintf(why, whylen, "The SD card cannot be written.");
+        return false;
+    }
+    ulog("Library: folder \"%s\" deleted", name);
+    return true;
 }
 
 }  // namespace libsd

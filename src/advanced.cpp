@@ -516,7 +516,7 @@ static void save_snapshot(const jl::Info &info) {
     ui::console("Saving", TFT_CYAN);
     ulog("Save \"%s\"", name);
     int num;
-    if (libsd::save(&lib_unit, info, name, fw_hint, library::SRC_BACKUP, &num, read_progress)) {
+    if (libsd::save(&lib_unit, info, "", name, fw_hint, library::SRC_BACKUP, &num, nullptr, read_progress)) {
         libsd::set_current(lib_unit, num, name);
         ui::console("Saved", TFT_GREEN);
         // the same contents under another name: say so (D deletes one)
@@ -528,7 +528,9 @@ static void save_snapshot(const jl::Info &info) {
             for (int i = 0; i < n_entries; i++)
                 if (i != self && entries[i].kind == library::SNAPSHOT && entries[i].has_crc &&
                     entries[i].crc == entries[self].crc) {
-                    ulog("Same contents as %s", entries[i].base);
+                    char same[80];
+                    library::label(entries[i], same, sizeof same);
+                    ulog("Same contents as %s", same);
                     ulog("(CRC32 %08lX): the unit has not", (unsigned long)entries[i].crc);
                     ulog("changed since. D deletes a copy.");
                     break;
@@ -544,19 +546,59 @@ static void save_snapshot(const jl::Info &info) {
 struct LoadCtx {
     const jl::Info *info;
     const library::Entry *e;
-    char autosave[64];  // what the auto-save did
+    char before[64];  // what the unit held before: where it is saved, or "not saved"
 };
 
-static bool autosave_hook(void *ctx, char *err, size_t errlen) {
-    LoadCtx *c = (LoadCtx *)ctx;
-    ui::clear_log();
-    ui::console("Auto-save", TFT_CYAN);
-    ulog("First the unit as it is now:");
-    if (!libsd::auto_save(&lib_unit, *c->info, fw_hint, c->e->name, c->autosave, sizeof c->autosave, read_progress)) {
-        snprintf(err, errlen, "the auto-save could not be made");
+// LOAD, before anything else: what the unit holds now is in the library (any
+// folder, its file checked), or S saves it first, or N goes on without.
+// False: stop (cancelled, or the save failed), nothing written.
+static bool save_first(const jl::Info &info, LoadCtx *c) {
+    char err[96];
+    uint32_t chip;
+    if (!jl::crc32(0, engine::FLASH_SIZE, &chip, err, sizeof err)) {
+        ulog("Chip CRC failed: %s", err);
         return false;
     }
-    ulog("Auto-save: %s", c->autosave);
+    int same = libsd::saved_as(lib_unit, entries, n_entries, chip);
+    if (same >= 0) {
+        library::label(entries[same], c->before, sizeof c->before);
+        ulog("The unit now: %s (saved)", c->before);
+        return true;
+    }
+    ui::clear_log();
+    ui::console("Save first?", TFT_ORANGE);
+    ulog("What the unit holds now (CRC32 %08lX)", (unsigned long)chip);
+    ulog("is not saved in the library.");
+    ulog("S  save it first (a name, then the load)");
+    ulog("N  no: unsaved patterns on the unit are");
+    ulog("   lost");
+    ui::status("S save it  N no  ESC cancel");
+    int k = ask("sn\x1b");
+    if (k == 'n') {
+        snprintf(c->before, sizeof c->before, "not saved");
+        ulog("Not saved first (N).");
+        return true;
+    }
+    if (k != 's') {
+        ulog("Cancelled: nothing written.");
+        return false;
+    }
+    char name[library::NAME_CHARS + 1];
+    library::suggest(fw_hint, libsd::today(), unit.name, name, sizeof name);
+    if (!name_window("Save first", "The unit as it is now, before the load.", name)) {
+        ulog("Cancelled: nothing written.");
+        return false;
+    }
+    ui::clear_log();
+    ui::console("Saving", TFT_CYAN);
+    int num;
+    if (!libsd::save(&lib_unit, info, "", name, fw_hint, library::SRC_BACKUP, &num, nullptr, read_progress)) {
+        ui::console("Not saved", TFT_RED);
+        ulog("Not saved: nothing written.");
+        return false;
+    }
+    library::base_name(num, name, c->before, sizeof c->before);
+    ulog("Saved first: %s", c->before);
     ui::console("Checking", TFT_YELLOW);
     return true;
 }
@@ -568,7 +610,7 @@ static switcher::Choice confirm_hook(void *ctx, int stage, const switcher::Repor
         ui::console("Load: ready", TFT_ORANGE);
         ulog("%04d %s, CRC32 %08lX,", c->e->number, c->e->name, (unsigned long)r.check.crc);
         ulog(r.check.verdict == restore::SAME_BY_ID ? "this unit's (same unit ID)." : "this unit's (factory data).");
-        ulog("Auto-save: %s", c->autosave);
+        ulog("Before: %s", c->before);
         ulog("Boot area kept (0x0-0x3FFF: the unit's).");
         if (r.boot_differs) ulog("The snapshot's boot area differs.");
         ulog("%lu sectors to write, %lu to erase.", (unsigned long)r.plan.to_write, (unsigned long)r.plan.to_erase);
@@ -623,14 +665,19 @@ static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
         return false;
     }
     ulog("Load %04d %s", e.number, e.name);
-    ulog("1. auto-save of the unit as it is now");
-    ulog("   (not stored twice if it equals one)");
+    ulog("1. what the unit holds now: if it is not");
+    ulog("   in the library, S saves it first");
     ulog("2. checks: this unit's, whole, intact");
     ulog("3. what differs, then W to write; the");
     ulog("   boot area is kept unless you ask.");
     ui::status("ENTER go on  ESC cancel");
     if (ask("\n\x1b") != '\n') {
         ulog("Cancelled: nothing written.");
+        return false;
+    }
+    LoadCtx ctx = {&info, &e, ""};
+    if (!save_first(info, &ctx)) {
+        wait_back();
         return false;
     }
     static writer::Source src;
@@ -644,7 +691,6 @@ static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
         wait_back();
         return false;
     }
-    LoadCtx ctx = {&info, &e, ""};
     switcher::Request req = {};
     req.info = &info;
     req.smk37 = is_smk37();
@@ -657,7 +703,6 @@ static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
     switcher::Hooks h = {};
     h.ctx = &ctx;
     h.battery = battery_hook;
-    h.auto_save = autosave_hook;
     h.confirm = confirm_hook;
     h.log = ulog;
     h.progress = load_progress;
@@ -685,7 +730,7 @@ static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
             ulog("%s", err);
             ulog("Do NOT switch the unit off. L again");
             ulog("finishes it (the card back in, if it");
-            ulog("was the card). Before: %s", ctx.autosave);
+            ulog("was the card). Before: %s", ctx.before);
             break;
         case switcher::REFUSED:
             ui::console("Refused", TFT_RED);
@@ -700,10 +745,10 @@ static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
         case switcher::CANCELLED:
             ui::console("Cancelled", TFT_ORANGE);
             ulog("Nothing written.");
-            if (ctx.autosave[0]) ulog("Auto-save: %s", ctx.autosave);
+            if (ctx.before[0]) ulog("Before: %s", ctx.before);
             break;
         default:
-            ui::console(o == switcher::AUTOSAVE_FAILED ? "No auto-save" : "Read failed", TFT_RED);
+            ui::console("Read failed", TFT_RED);
             if (err[0]) ulog("%s", err);
             ulog("Nothing written.");
             break;

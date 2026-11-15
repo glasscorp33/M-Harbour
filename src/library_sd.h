@@ -32,8 +32,12 @@ bool identify(const jl::Info &info, bool smk37, const char *model, Unit *u, char
 bool ensure(Unit *u, const jl::Info &info);
 bool set_label(Unit *u, const jl::Info &info, const char *label);
 
-// The unit's snapshots and every old backup, newest first, current marked.
+// The unit's snapshots (all its folders) and every old backup, newest
+// first, current marked.
 int list(const Unit &u, const jl::Info &info, library::Entry *e, int max);
+// The unit's folders on the card (the directories in snapshots/), at most
+// library::MAX_FOLDERS; how many.
+int folder_dirs(const Unit &u, char (*dirs)[library::FOLDER_CHARS + 1], int max);
 int current(const Unit &u);
 bool set_current(const Unit &u, int number, const char *name);
 
@@ -44,19 +48,31 @@ void txt_path(const Unit &u, const library::Entry &e, char *out, size_t n);
 bool read_meta(const Unit &u, const library::Entry &e, library::Meta *m);
 
 // SAVE: the unit's whole flash as a new snapshot (verified as a backup is),
-// and its .txt. number gets its number.
-bool save(Unit *u, const jl::Info &info, const char *name, const char *firmware, library::Source source, int *number,
-          engine::Progress progress);
-// The auto-save before a LOAD: unless the flash equals a snapshot already
-// there (its CRC32, and its file checked), saved as "auto <current>".
-// what: what happened, for the screen ("equals 0003 Dub 1", "0005 auto ...").
-bool auto_save(Unit *u, const jl::Info &info, const char *firmware, const char *target, char *what, size_t whatlen,
-               engine::Progress progress);
+// and its .txt, in folder ("": none; it must exist). number gets its
+// number, crc its CRC32 (may be nullptr).
+bool save(Unit *u, const jl::Info &info, const char *folder, const char *name, const char *firmware,
+          library::Source source, int *number, uint32_t *crc, engine::Progress progress);
+// Whether e's .bin really holds the CRC32 its .txt says (the file read).
+bool file_matches(const Unit &u, const library::Entry &e);
+// What the device holds is saved (library::saved_as), its file checked:
+// the index into e of the snapshot that holds chip_crc, or -1.
+int saved_as(const Unit &u, const library::Entry *e, int n, uint32_t chip_crc);
 // IMPORT: copies an old backup (checked by the caller with restore::check)
-// into the library with a name; the copy's CRC32 must be the backup's.
+// into the library with a name ("(no folder)"); the copy's CRC32 must be the backup's.
 bool import(Unit *u, const jl::Info &info, const library::Entry &legacy, const char *name, int *number,
             engine::Progress progress);
 bool rename(const Unit &u, const library::Entry &e, const char *name);
 bool remove(const Unit &u, const library::Entry &e);
+// MOVE: both files into another folder ("": none), the same names.
+bool move(const Unit &u, const library::Entry &e, const char *to_folder);
+
+// Folders. made gets the folder's name as on the card (library::folder_name).
+// False (and why, for the screen) if the name is empty, taken, or the card fails.
+bool make_folder(Unit *u, const jl::Info &info, const char *typed, char *made, size_t madelen, char *why,
+                 size_t whylen);
+bool rename_folder(const Unit &u, const char *from, const char *typed, char *made, size_t madelen, char *why,
+                   size_t whylen);
+// Only an empty folder (no file at all in it); false with why otherwise.
+bool remove_folder(const Unit &u, const char *name, char *why, size_t whylen);
 
 }  // namespace libsd

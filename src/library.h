@@ -5,8 +5,13 @@
 //
 //   /fm1/units/<unit id>/unit.txt            model, chip key, flash ID, label
 //   /fm1/units/<unit id>/current.txt         the snapshot last saved or loaded
-//   /fm1/units/<unit id>/snapshots/NNNN <safe name>.bin / .txt
+//   /fm1/units/<unit id>/snapshots/NNNN <safe name>.bin / .txt   "(no folder)"
+//   /fm1/units/<unit id>/snapshots/<folder>/NNNN <safe name>.bin / .txt
 //   /fm1/backup-NNN.bin / .txt               older backups: listed, importable
+//
+// Folders are one level deep, named by the user (FAT-safe). The numbers are
+// unique across all of a unit's folders, so a snapshot keeps its number when
+// it is moved from one folder to another.
 //
 // A snapshot's .txt is a backup's .txt (restore::parse_notes reads it: chip
 // key, flash id, unit id, size, crc32) with more lines: name (as typed),
@@ -24,6 +29,8 @@ static constexpr size_t NAME_CHARS = 36;       // a typed name, characters
 static constexpr size_t SAFE_MAX = 32;       // its FAT-safe copy in the file name
 static constexpr size_t BASE_LEN = 4 + 1 + SAFE_MAX + 1;  // "NNNN safe" and its 0
 static constexpr int NUMBER_MAX = 9999;
+static constexpr size_t FOLDER_CHARS = 24;    // a folder's name (FAT-safe as typed)
+static constexpr int MAX_FOLDERS = 24;        // folders of a unit that are listed
 
 // --- names
 
@@ -46,10 +53,19 @@ bool parse_legacy_file(const char *file, int *number);
 // ("SMK-37"), else "snapshot". firmware: the USB product name seen before
 // the soft key (trimmed here), or "".
 void suggest(const char *firmware, const char *date, const char *model, char *out, size_t outlen);
-// An auto-save's name: "auto <current>" (an "auto " already there is not
-// doubled) plus the date if known; without a current, "auto <suggestion>".
-void auto_name(const char *target, const char *current, const char *firmware, const char *date, const char *model, char *out,
-               size_t outlen);
+
+// --- folders
+
+// A typed folder name as the directory's name: cleaned as a name, / \ : * ?
+// " < > | and anything not ASCII become -, leading dots and spaces dropped,
+// no trailing dot or space, at most FOLDER_CHARS characters. False when
+// nothing is left (out is then "").
+bool folder_name(const char *typed, char *out, size_t outlen);
+// The same folder on a FAT card: names equal but for case ("" is "(no folder)").
+bool same_folder(const char *a, const char *b);
+// <unit_dir>/snapshots[/<folder>]/<base><ext>
+void snapshot_path(const char *unit_dir, const char *folder, const char *base, const char *ext, char *out,
+                   size_t outlen);
 
 // --- a snapshot's .txt
 
@@ -107,7 +123,9 @@ struct Entry {
     Kind kind;
     int number;                   // NNNN of a snapshot, NNN of backup-NNN
     char base[BASE_LEN + 8];      // the file name without .bin
+    char folder[FOLDER_CHARS + 1];  // a snapshot's folder; "": none (the snapshots folder itself)
     char name[NAME_CHARS + 1];      // as shown
+    char date[16];                // from its .txt; "" when not known
     bool has_crc;
     uint32_t crc;
     Source source;
@@ -115,8 +133,9 @@ struct Entry {
     bool current;
     Whose whose;                  // a legacy backup's
 };
-// Fills a snapshot's entry from its file name and .txt (text nullptr: none).
-void snapshot_entry(int number, const char *base, const char *text, Entry *e);
+// Fills a snapshot's entry from its file name and .txt (text nullptr: none),
+// in folder ("" or nullptr: none).
+void snapshot_entry(int number, const char *base, const char *text, Entry *e, const char *folder = "");
 // Fills an old backup's entry from its .txt, for the connected unit.
 void legacy_entry(int number, const char *text, const jl::Info &info, Entry *e);
 Whose whose(const restore::Notes *notes, const jl::Info &info);
@@ -129,10 +148,32 @@ void sort(Entry *e, int n, int current);
 // one that was deleted and might still be in a log), 1 for the first; 0 if
 // NUMBER_MAX is used up.
 int next_number(const Entry *e, int n);
-// A snapshot with this CRC32 (its .txt's), or -1: an auto-save that equals
-// one is not stored again.
+// A snapshot with this CRC32 (its .txt's), in any folder, or -1.
 int find_crc(const Entry *e, int n, uint32_t crc);
 int count_snapshots(const Entry *e, int n);
+
+// "<folder> / <name>", or the name alone for "(no folder)".
+void label(const Entry &e, char *out, size_t outlen);
+
+// What the device holds is saved: the snapshot (any folder) whose CRC32 is
+// the chip's, skipping the indices in skip (their files failed the check
+// that they really hold that CRC32), or -1: not saved. LOAD asks "save
+// first?" only when it is -1.
+int saved_as(const Entry *e, int n, uint32_t chip_crc, const int *skip, int nskip);
+
+// A unit's folders as the screens list them: [0] is "(no folder)" (name ""),
+// then the folders found on the card (dirs), in alphabetical order (case
+// ignored), each with its snapshots counted and its newest (the highest
+// number; an index into e, -1 when empty). How many, at most max.
+struct Folder {
+    char name[FOLDER_CHARS + 1];
+    int count;
+    int newest;
+};
+int folders(const Entry *e, int n, const char (*dirs)[FOLDER_CHARS + 1], int ndirs, Folder *out, int max);
+// The snapshots in one folder, oldest first (by number): their indices into
+// e, at most max; how many.
+int in_folder(const Entry *e, int n, const char *folder, int *idx, int max);
 
 // The connected unit's model and the snapshot's: equal, or one is unknown.
 bool same_model(const char *unit_model, const char *snap_model);
