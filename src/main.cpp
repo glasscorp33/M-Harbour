@@ -5,14 +5,16 @@
 // (uboot_host.cpp), starts M-Flasher's loader (jl.cpp) and backs the unit up
 // to the SD card (engine.cpp) or installs a rescue image (writer.cpp).
 //
-// Two ways through it: the guided mode (guided.cpp, the default: a picture,
-// a few words and one key a step) and the advanced mode (advanced.cpp: the
-// log on screen, each step under control, self-tests, hand-off to a PC).
+// The home menu (home.cpp) has two ways in. RECOVERY: the guided mode
+// (guided.cpp: a picture, a few words and one key a step) and the advanced
+// mode (advanced.cpp: the log on screen, each step under control, self-tests,
+// hand-off to a PC). FIRMWARE MANAGER (fwman.cpp): a running unit reached
+// over USB MIDI (the soft key), its firmwares backed up, kept in folders on
+// the SD card and switched.
 
 #include <M5Cardputer.h>
 
-#include "advanced.h"
-#include "guided.h"
+#include "home.h"
 #include "modes.h"
 #include "sd.h"
 #include "ui.h"
@@ -37,8 +39,4 @@ void setup() {
     }
 }
 
-void loop() {
-    modes::Mode m = modes::at_boot();
-    if (m == modes::ADVANCED) advanced::run();
-    guided::run(m == modes::GUIDED_SWITCH_ON);
-}
+void loop() { home::run(modes::at_boot()); }

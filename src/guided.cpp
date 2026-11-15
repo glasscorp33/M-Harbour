@@ -2,7 +2,7 @@
 // step that needs the user waits for its own key (1, 2, 3, Y, ...), so a key
 // pressed twice never skips a step; everything else goes on by itself.
 //
-//   home     ENTER        start (A: the advanced mode)
+//   home     ENTER        start (A: the advanced mode, ESC: the home menu)
 //   1        switch it off
 //   2        connect the cable
 //   3        a backup card (optional; shows whether one is in)
@@ -216,7 +216,8 @@ void run(bool switch_on) {
         if (!switch_on) {
             Page home = {"welcome", ui::CYAN, "Synth rescue", "An FM-1 or SMK-37 that won't start? Let's fix it.",
                          "ENTER", "start", "A: advanced"};
-            int k = ask(home, "\na");
+            int k = ask(home, "\na\x1b");
+            if (k == 27) return;  // back to the home menu
             if (k == 'a') {
                 advanced::run();
                 continue;

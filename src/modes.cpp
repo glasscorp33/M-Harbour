@@ -18,9 +18,8 @@ void restart_into(Mode m) {
 }
 
 Mode at_boot() {
-    Mode m = GUIDED;
-    if (esp_reset_reason() == ESP_RST_SW && rtc_magic == MAGIC &&
-        (rtc_mode == GUIDED || rtc_mode == ADVANCED || rtc_mode == GUIDED_SWITCH_ON))
+    Mode m = HOME;
+    if (esp_reset_reason() == ESP_RST_SW && rtc_magic == MAGIC && rtc_mode >= GUIDED && rtc_mode <= FW_MANAGER)
         m = (Mode)rtc_mode;
     rtc_magic = 0;
     return m;

@@ -28,7 +28,7 @@ static void idle_screen() {
     ulog("H         key only, then move to a PC");
     ulog("P / T     pin check / pulse test");
     ulog("          (nothing plugged in)");
-    ulog("ESC       back to the guided mode");
+    ulog("ESC       back to the menu");
     ulog("Synth rescue %s", APP_VERSION);
     ui::status(sd_ok ? "SD card ready" : "No SD card: backups need one");
 }
