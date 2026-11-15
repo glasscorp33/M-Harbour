@@ -1,4 +1,15 @@
-# Synth rescue for the M5Stack Cardputer ADV
+# M-Harbour
+
+Firmware manager and rescue tool for the M-VAVE FM-1 and SMK-37, on the
+M5Stack Cardputer ADV: back up, keep and switch firmwares with their data, and
+bring a bricked unit back to life. Not made by or associated with M-VAVE.
+
+M-Harbour started as a fork of
+[cardputer-synth-rescue](https://github.com/jvitkauskas/cardputer-synth-rescue)
+by Julius Vitkauskas (MIT); the rescue part below is his work, extended.
+
+## Rescue (Recovery)
+
 
 Brings a bricked M-VAVE FM-1 or SMK-37 (JieLi AC791N / WL82) back to life with
 nothing but an [M5Stack Cardputer ADV](https://docs.m5stack.com/en/core/Cardputer-Adv)
@@ -53,7 +64,7 @@ those two firmwares answer the soft key is unknown.
 
 ## Install
 
-Download `synth-rescue-vX.Y.Z-cardputer-adv.bin` from the
+Download `m-harbour-vX.Y.Z-cardputer-adv.bin` from the
 [releases](../../releases): one merged image (bootloader, partition table and
 app; it goes at `0x0`).
 
@@ -64,7 +75,7 @@ app; it goes at `0x0`).
   at power-on gets you back to it.
 - **With esptool** from a computer: the Cardputer in download mode (power
   switch OFF, hold G0, plug in USB-C), then
-  `esptool --chip esp32s3 write-flash 0x0 synth-rescue-vX.Y.Z-cardputer-adv.bin`.
+  `esptool --chip esp32s3 write-flash 0x0 m-harbour-vX.Y.Z-cardputer-adv.bin`.
 
 The app takes over the Cardputer's USB-C port for the unit, so to install
 something else later from a computer, use download mode again (or Launcher).

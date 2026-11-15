@@ -56,7 +56,7 @@ void run(modes::Mode m) {
     static const Box b[] = {{"RECOVERY", "Fix a device that does not start (brick)"},
                             {"FIRMWARE MANAGER", "Back up, keep and switch firmwares"}};
     char title[32];
-    snprintf(title, sizeof title, "SYNTH TOOL  %s", APP_VERSION);
+    snprintf(title, sizeof title, "M-HARBOUR  %s", APP_VERSION);
     int sel = m == modes::FW_MANAGER ? 1 : 0;
     for (;;) {
         sel = two_boxes(title, HOME, b, sel, false);

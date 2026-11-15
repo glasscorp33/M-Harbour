@@ -52,12 +52,12 @@ jobs:
         run: |
           mkdir dist
           cp .pio/build/cardputer-adv/firmware.factory.bin \
-             "dist/synth-rescue-v${{ steps.version.outputs.version }}-cardputer-adv.bin"
+             "dist/m-harbour-v${{ steps.version.outputs.version }}-cardputer-adv.bin"
           (cd dist && sha256sum *.bin > SHA256SUMS && cat SHA256SUMS)
 
       - uses: actions/upload-artifact@v7
         with:
-          name: synth-rescue-v${{ steps.version.outputs.version }}
+          name: m-harbour-v${{ steps.version.outputs.version }}
           path: dist/
 
       - name: Release
@@ -68,4 +68,4 @@ jobs:
         run: |
           sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
-            --title "Synth rescue $VERSION" --notes-file notes.md
+            --title "M-Harbour $VERSION" --notes-file notes.md

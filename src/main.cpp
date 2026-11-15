@@ -33,7 +33,7 @@ void setup() {
     if (sd_mount()) {
         File f = SD.open("/fm1/log.txt", FILE_APPEND);
         if (f) {
-            f.printf("\n--- boot, synth rescue %s\n", APP_VERSION);
+            f.printf("\n--- boot, M-Harbour %s\n", APP_VERSION);
             f.close();
         }
     }

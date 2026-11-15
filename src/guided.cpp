@@ -214,7 +214,7 @@ static bool backup_or_not(const jl::Info &info) {
 void run(bool switch_on) {
     for (;;) {
         if (!switch_on) {
-            Page home = {"welcome", ui::CYAN, "Synth rescue", "An FM-1 or SMK-37 that won't start? Let's fix it.",
+            Page home = {"welcome", ui::CYAN, "M-Harbour rescue", "An FM-1 or SMK-37 that won't start? Let's fix it.",
                          "ENTER", "start", "A: advanced"};
             int k = ask(home, "\na\x1b");
             if (k == 27) return;  // back to the home menu

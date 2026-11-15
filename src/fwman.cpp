@@ -643,9 +643,9 @@ static void library_menu() {
         char title[48];
         title_of(title, sizeof title, "LIBRARY " G_MID " ", unit.name);
         begin(title, LIB);
-        line(BODY_Y, 11, SMALL, CY, "Folders");
+        line(BODY_Y, 11, SMALL, HOME, "F new folder  N rename  D delete");
         rows(BODY_Y + 12, row_buf, n, sel);
-        foot("ENTER open  F new  N rename  D delete");
+        foot("ENTER open folder   ESC back");
         end();
         int k = nav(key());
         if (move(k, &sel, n)) continue;

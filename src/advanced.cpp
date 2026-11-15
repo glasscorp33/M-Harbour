@@ -29,7 +29,7 @@ static void idle_screen() {
     ulog("P / T     pin check / pulse test");
     ulog("          (nothing plugged in)");
     ulog("ESC       back to the menu");
-    ulog("Synth rescue %s", APP_VERSION);
+    ulog("M-Harbour %s", APP_VERSION);
     ui::status(sd_ok ? "SD card ready" : "No SD card: backups need one");
 }
 
