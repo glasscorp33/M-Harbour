@@ -242,7 +242,7 @@ static void rescue(const jl::Info &info) {
 // firmware, settings), all but the ranges the rescue never writes either.
 
 // n: backup-NNN, picked on the library screen.
-static void restore_backup(const jl::Info &info, int n) {
+static bool restore_backup(const jl::Info &info, int n) {
     char err[128];
     ui::clear_log();
     ui::console("Restore backup", TFT_ORANGE);
@@ -250,12 +250,12 @@ static void restore_backup(const jl::Info &info, int n) {
     if (info.chip_key != 0x980F || !(fm1 || smk37)) {
         ulog("Unknown unit (key %04X, flash %06lX):", info.chip_key, (unsigned long)info.flash_id);
         ulog("no restore for it.");
-        return;
+        return false;
     }
     if (!sd_ready()) {
         ulog("No SD card: insert the one with the");
         ulog("backups (FAT32), then L again.");
-        return;
+        return false;
     }
 
     // whole, intact and this unit's: refused otherwise, before anything else
@@ -268,7 +268,7 @@ static void restore_backup(const jl::Info &info, int n) {
     ulog("Restore %s.bin: checking it", name);
     if (!engine::open_backup(n, &src, &size)) {
         ulog("Cannot open %s.bin.", name);
-        return;
+        return false;
     }
     restore::Notes notes;
     bool has_notes = engine::backup_notes(n, &notes);
@@ -276,7 +276,7 @@ static void restore_backup(const jl::Info &info, int n) {
     if (!restore::check(info, smk37, size, has_notes ? &notes : nullptr, src, check_progress, &r, err, sizeof err)) {
         ulog("Reading the unit failed: %s", err);
         engine::close_backup();
-        return;
+        return false;
     }
     ulog("%s: %s", name, r.why);
     if (!restore::allowed(r.verdict)) {
@@ -287,7 +287,7 @@ static void restore_backup(const jl::Info &info, int n) {
         ulog("Nothing written.");
         ui::status("Refused: nothing written");
         engine::close_backup();
-        return;
+        return false;
     }
 
     // what it holds, and what would change
@@ -299,7 +299,7 @@ static void restore_backup(const jl::Info &info, int n) {
         ulog("Comparing failed: %s", err);
         ulog("Nothing written.");
         engine::close_backup();
-        return;
+        return false;
     }
     ui::clear_log();
     ui::console("Restore backup", TFT_ORANGE);
@@ -314,14 +314,14 @@ static void restore_backup(const jl::Info &info, int n) {
         ulog("The unit already holds this backup.");
         ui::status("Nothing to write");
         engine::close_backup();
-        return;
+        return false;
     }
     ulog("%lu sectors to write, %lu to erase.", (unsigned long)plan.to_write, (unsigned long)plan.to_erase);
     ui::status("ENTER continue  ESC cancel");
     if (choose("\n\x1b") != '\n') {
         ulog("Cancelled: nothing written.");
         engine::close_backup();
-        return;
+        return false;
     }
 
     // the unit as it is now kept first, unless this session has a backup already
@@ -332,7 +332,7 @@ static void restore_backup(const jl::Info &info, int n) {
         if (!backup(info)) {
             ulog("No valid backup: nothing written.");
             engine::close_backup();
-            return;
+            return false;
         }
     }
     ui::clear_log();
@@ -346,7 +346,7 @@ static void restore_backup(const jl::Info &info, int n) {
     if (choose("w\x1b") != 'w') {
         ulog("Cancelled: nothing written.");
         engine::close_backup();
-        return;
+        return false;
     }
     ui::clear_log();
     ui::console("Writing", TFT_YELLOW);
@@ -361,10 +361,11 @@ static void restore_backup(const jl::Info &info, int n) {
         ulog("As it was: %s", session_bak);
         ulog("L tries again (the card back in, if");
         ulog("it was the card); R restarts the unit.");
-        return;
+        return false;
     }
     ui::console("Backup restored", TFT_GREEN);
     ulog("Done in %lu s. R restarts the unit.", (unsigned long)((millis() - t0) / 1000));
+    return true;
 }
 
 // A unit with no rescue image and no library (not an FM-1 or SMK-37):
@@ -518,6 +519,20 @@ static void save_snapshot(const jl::Info &info) {
     if (libsd::save(&lib_unit, info, name, fw_hint, library::SRC_BACKUP, &num, read_progress)) {
         libsd::set_current(lib_unit, num, name);
         ui::console("Saved", TFT_GREEN);
+        // the same contents under another name: say so (D deletes one)
+        reload(info);
+        int self = -1;
+        for (int i = 0; i < n_entries; i++)
+            if (entries[i].kind == library::SNAPSHOT && entries[i].number == num) self = i;
+        if (self >= 0 && entries[self].has_crc)
+            for (int i = 0; i < n_entries; i++)
+                if (i != self && entries[i].kind == library::SNAPSHOT && entries[i].has_crc &&
+                    entries[i].crc == entries[self].crc) {
+                    ulog("Same contents as %s", entries[i].base);
+                    ulog("(CRC32 %08lX): the unit has not", (unsigned long)entries[i].crc);
+                    ulog("changed since. D deletes a copy.");
+                    break;
+                }
     } else {
         ui::console("Not saved", TFT_RED);
     }
@@ -586,7 +601,16 @@ static void load_progress(uint32_t done, uint32_t total) {
 // True: the session ends (the unit was restarted).
 static bool load_snapshot(const jl::Info &info, const library::Entry &e) {
     if (e.kind == library::LEGACY) {  // an old backup: the restore, exactly as before
-        restore_backup(info, e.number);
+        if (restore_backup(info, e.number)) {
+            // the unit now holds that backup: current is the snapshot equal to
+            // it, if there is one, else none (it was stale before)
+            int i = e.has_crc ? library::find_crc(entries, n_entries, e.crc) : -1;
+            if (i >= 0) libsd::set_current(lib_unit, entries[i].number, entries[i].name);
+            else {
+                libsd::set_current(lib_unit, 0, "");
+                ulog("Library: no snapshot equals it, so none is current.");
+            }
+        }
         wait_back();
         return false;
     }
@@ -779,9 +803,27 @@ static void import_backup(const jl::Info &info, const library::Entry &e) {
         wait_back();
         return;
     }
+    // I takes the selected OLD FILE, not the unit as it is now (that is ENTER):
+    // say what is in it so it gets the right name
+    if (e.has_crc) {
+        ulog("backup-%03d holds CRC32 %08lX", e.number, (unsigned long)e.crc);
+        int same = library::find_crc(entries, n_entries, e.crc);
+        if (same >= 0) ulog("= the same as %s", entries[same].base);
+        uint32_t now = 0;
+        char cerr[96];
+        if (jl::crc32(0, engine::FLASH_SIZE, &now, cerr, sizeof cerr))
+        {
+            if (now == e.crc) ulog("= what the unit holds now");
+            else ulog("NOT what the unit holds now (%08lX)", (unsigned long)now);
+        }
+    }
+    ulog("I imports this old file. To save the");
+    ulog("unit as it is now, press ENTER instead.");
+    ui::console("Import backup", TFT_CYAN);
+    if (choose("\n\x1b") != '\n') return;
     char name[library::NAME_CHARS + 1];
     snprintf(name, sizeof name, "backup-%03d", e.number);
-    if (!name_window("Import: name", "A name for it in the library.", name)) return;
+    if (!name_window("Import: name", "Name it after what it holds.", name)) return;
     ui::clear_log();
     ui::console("Importing", TFT_CYAN);
     int num;
