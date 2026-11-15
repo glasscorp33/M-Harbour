@@ -115,7 +115,7 @@ int read_key() {
 
 // read_input's memory of what is held (see there)
 static std::vector<char> in_prev_word;
-static bool in_prev[2];
+static bool in_prev[3];
 
 void wait_released() {
     do {
@@ -134,7 +134,7 @@ bool any_key_cancel() {
 }
 
 // Written for M5Cardputer 1.1.1 (what platformio.ini pins): its KeysState has
-// enter, del (the Backspace key), fn and shift flags and the typed characters in
+// enter, del (the Backspace key), tab, fn and shift flags and the typed characters in
 // word; fn does not change the characters, so fn+; . , / arrive as ; . , / with
 // fn set, and are turned into the arrows here.
 int read_input() {
@@ -148,14 +148,15 @@ int read_input() {
     auto &kb = M5Cardputer.Keyboard;
     if (!kb.isChange()) return 0;
     auto st = kb.keysState();
-    bool now[2] = {st.enter, st.del};
-    bool was[2];
+    bool now[3] = {st.enter, st.del, st.tab};
+    bool was[3];
     memcpy(was, in_prev, sizeof was);
     memcpy(in_prev, now, sizeof in_prev);
     std::vector<char> old = in_prev_word;
     in_prev_word = st.word;
     if (now[0] && !was[0]) return '\n';
     if (now[1] && !was[1]) return st.fn ? IN_DEL : IN_BKSP;
+    if (now[2] && !was[2]) return IN_TAB;
     for (char c : st.word) {
         bool held = false;
         for (char o : old) held |= o == c;

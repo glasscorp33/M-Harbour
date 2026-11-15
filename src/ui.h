@@ -26,8 +26,8 @@ bool any_key_cancel();
 // For typing and lists: each key once, as it goes down (a key still held
 // while another is pressed is not repeated), with its case and shifted
 // symbol; or one of these. 0: nothing new.
-enum : int { IN_BKSP = 8, IN_ESC = 27, IN_DEL = 0x7F, IN_UP = 0x101, IN_DOWN, IN_LEFT, IN_RIGHT };
-// '\n' ENTER or G0, IN_ESC (` or fn+`), IN_BKSP, IN_DEL (fn+BKSP), the
+enum : int { IN_BKSP = 8, IN_TAB = 9, IN_ESC = 27, IN_DEL = 0x7F, IN_UP = 0x101, IN_DOWN, IN_LEFT, IN_RIGHT };
+// '\n' ENTER or G0, IN_ESC (` or fn+`), IN_BKSP, IN_DEL (fn+BKSP), IN_TAB, the
 // arrows (fn+; . , /), or a printable character (shift: capitals, ! @ # ...).
 int read_input();
 
