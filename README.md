@@ -21,8 +21,7 @@ The Cardputer starts on a home menu with two choices:
   off), the Cardputer asks it over USB MIDI to open its download mode, and
   then:
   - **BACKUP CURRENT**: the whole unit (firmware, presets, settings,
-    patterns) into a folder, under a name you type (the names already in the
-    folder are shown, to keep one format);
+    patterns) into a folder, under a name you type 
   - **LIBRARY**: folders and backups: new folder, rename, move, delete;
   - **LOAD FIRMWARE**: put a backup back on the unit. If what the unit holds
     is not saved yet, it asks first. Only the sectors that differ are written
