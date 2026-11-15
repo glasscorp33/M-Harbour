@@ -82,7 +82,7 @@ static void port_state(char *out, size_t n) {
     snprintf(out, n, "port conn%lu ena%lu pwr%lu line D+%lu D-%lu spd%lu | pads D+%d D-%d",
              (unsigned long)(h & 1), (unsigned long)((h >> 2) & 1), (unsigned long)((h >> 12) & 1),
              (unsigned long)((h >> 10) & 1), (unsigned long)((h >> 11) & 1), (unsigned long)((h >> 17) & 3),
-             (in >> 20) & 1, (in >> 19) & 1);
+             (int)((in >> 20) & 1), (int)((in >> 19) & 1));
 }
 
 // Host channels in use: characteristics (odd-frame bit masked), transfer size
@@ -189,8 +189,9 @@ static bool find_bulk(const usb_config_desc_t *cd) {
     return true;
 }
 
-bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, char *err, size_t errlen) {
-    TickType_t t0 = xTaskGetTickCount();
+bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, char *err, size_t errlen,
+                 bool (*tick)()) {
+    TickType_t t0 = xTaskGetTickCount(), last_tick = t0;
     char last[96] = "", now[96], last_ch[160] = "", now_ch[160];
     int ch_logged = 0;
     TickType_t last_fn = t0;
@@ -218,6 +219,13 @@ bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, cha
             log_phy(log);
             snprintf(err, errlen, "no USB device in %lu ms", (unsigned long)timeout_ms);
             return false;
+        }
+        if (tick && xTaskGetTickCount() - last_tick >= pdMS_TO_TICKS(20)) {
+            last_tick = xTaskGetTickCount();
+            if (tick()) {
+                snprintf(err, errlen, "cancelled while waiting for a USB device");
+                return false;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }

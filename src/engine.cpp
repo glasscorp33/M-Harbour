@@ -122,7 +122,7 @@ static ConnectResult start_loader(jl::Info *info, char *err, size_t errlen) {
     return CONN_OK;
 }
 
-ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
+static ConnectResult host_connect(jl::Info *info, uint32_t timeout_ms, bool (*tick)(), char *err, size_t errlen) {
     usbkey::bus_float();
     other = {};
     if (!host::start()) {
@@ -131,8 +131,9 @@ ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
         return CONN_HOST_ERROR;
     }
     uint16_t vid = 0, pid = 0;
-    if (!host::wait_device(12000, &vid, &pid, ulog, err, errlen)) {
+    if (!host::wait_device(timeout_ms, &vid, &pid, ulog, err, errlen, tick)) {
         ulog("%s", err);
+        if (!vid && tick && strstr(err, "cancelled")) return CONN_CANCELLED;
         if (vid) {
             ulog("Device %04X:%04X: not the download mode", vid, pid);
             inspect_other(vid, pid);
@@ -148,6 +149,13 @@ ConnectResult connect(jl::Info *info, char *err, size_t errlen) {
         return CONN_NOT_ROM;
     }
     return start_loader(info, err, errlen);
+}
+
+ConnectResult connect(jl::Info *info, char *err, size_t errlen) { return host_connect(info, 12000, nullptr, err, errlen); }
+
+ConnectResult connect_any(jl::Info *info, uint32_t timeout_ms, bool (*tick)(), char *err, size_t errlen) {
+    ulog("Waiting up to %lu s for a device (no power-on key)", (unsigned long)(timeout_ms / 1000));
+    return host_connect(info, timeout_ms, tick, err, errlen);
 }
 
 ConnectResult soft_key(jl::Info *info, bool (*tick)(), char *err, size_t errlen) {

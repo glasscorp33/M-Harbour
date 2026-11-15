@@ -41,6 +41,14 @@ enum ConnectResult {
 };
 ConnectResult connect(jl::Info *info, char *err, size_t errlen);
 
+// The firmware manager's way in, without the power-on key: the USB host,
+// then up to timeout_ms for any device (the unit already on, or switched on
+// now; tick, nullptr or called every 20 ms or so, true cancels:
+// CONN_CANCELLED). The download mode (4C4A:8057): the loader, as connect().
+// Anything else: CONN_NOT_ROM with `other` filled (soft_key() next, for
+// USB MIDI). No device: CONN_NO_DEVICE. Nothing is sent to the device.
+ConnectResult connect_any(jl::Info *info, uint32_t timeout_ms, bool (*tick)(), char *err, size_t errlen);
+
 // After CONN_NOT_ROM: the device that answered instead of the download mode
 // (a unit running its firmware, m-bootloader's MIDI mode, a bootloader's
 // update loader, ...).
@@ -54,7 +62,7 @@ extern Other other;
 
 // --- a running unit: the soft key over USB MIDI (M-Flasher's src/midi.rs)
 // After CONN_NOT_ROM with other.midi == FOUND, and only when the user asked
-// for it: sends F0 22 24 35 7D F7 to the first MIDI OUT (cable 0), waits up
+// for it (the firmware manager: by choosing it, which asks for this): sends F0 22 24 35 7D F7 to the first MIDI OUT (cable 0), waits up
 // to SOFT_KEY_MS for the unit to leave USB and come back as the download mode
 // (4C4A:8057), then goes on as connect() does. Nothing else is ever sent to
 // the device. tick: called while waiting, true cancels.

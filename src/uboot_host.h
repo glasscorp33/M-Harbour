@@ -16,8 +16,10 @@ typedef void (*Log)(const char *fmt, ...);
 // Waits for a device to enumerate; fills vid/pid. Claims its bulk interface.
 // Logs the root port's state as it changes, and ESP-IDF's own USB messages.
 // False with vid set: a device came, but it has no bulk interface (it stays
-// open: device() describes it).
-bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, char *err, size_t errlen);
+// open: device() describes it). tick (nullptr: none) is called every 20 ms
+// or so while nothing is there; true cancels (false, vid 0).
+bool wait_device(uint32_t timeout_ms, uint16_t *vid, uint16_t *pid, Log log, char *err, size_t errlen,
+                 bool (*tick)() = nullptr);
 bool connected();
 
 // The device wait_device() opened: its IDs, product string ("" without one)
